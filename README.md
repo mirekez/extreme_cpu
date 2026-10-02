@@ -118,3 +118,26 @@ BUS_WIDTH, queue depth, and core/bank counts are configured with EC_BITS,
 EC_DEPTH, EC_CORES, and EC_BANKS CMake cache variables.
 
 See doc/instructions.md and compiler/README.md for the ISA and compiler ABI.
+
+## Code formatting
+
+Handwritten code uses four-space indentation, braces around C++ control-flow
+bodies, one statement per line, and a 100-column limit. Empty functions may
+remain on one line. C++HDL-specific declarations and assignment macros retain
+their required structure. Makefile recipes use tabs.
+
+The checked-in `.clang-format`, `pyproject.toml`, `.cmake-format.json`, and
+`.editorconfig` define the style. Use clang-format 21 (available in the CppHDL
+Conda environment), Black, and cmake-format:
+
+```sh
+python3 -m pip install -r requirements-format.txt
+make format
+make format-check
+```
+
+`CLANG_FORMAT` can select the clang-format executable. The formatting script
+covers tracked and new handwritten C++ headers/sources, Python scripts and the
+compiler-driver template, and CMake files; it honors `.gitignore` and excludes
+generated build output. The check command reports formatting changes without
+modifying files.

@@ -1,44 +1,91 @@
 #!/usr/bin/env python3
 """Freestanding Clang frontend plus the Extreme LLVM IR backend."""
+
 import argparse
 from pathlib import Path
 import subprocess
 import tempfile
-p=argparse.ArgumentParser()
-p.add_argument('sources',nargs='+',type=Path)
-p.add_argument('-o','--output',required=True,type=Path)
-p.add_argument('--bits',type=int,choices=[64,128,256,512],default=128)
-p.add_argument('--regs',type=int,default=8)
-p.add_argument('--banks',type=int,default=2)
-p.add_argument('--bank-words',type=int,default=4096)
-p.add_argument('--entry',default='kernel')
-p.add_argument('-I',dest='includes',action='append',default=[])
-p.add_argument('-D',dest='defines',action='append',default=[])
-p.add_argument('--emit-ir',type=Path)
-a=p.parse_args()
-root=Path('@CMAKE_SOURCE_DIR@')
-codegen=Path('@CMAKE_CURRENT_BINARY_DIR@')/'extreme-codegen'
-a.output.parent.mkdir(parents=True,exist_ok=True)
+
+p = argparse.ArgumentParser()
+p.add_argument("sources", nargs="+", type=Path)
+p.add_argument("-o", "--output", required=True, type=Path)
+p.add_argument("--bits", type=int, choices=[64, 128, 256, 512], default=128)
+p.add_argument("--regs", type=int, default=8)
+p.add_argument("--banks", type=int, default=2)
+p.add_argument("--bank-words", type=int, default=4096)
+p.add_argument("--entry", default="kernel")
+p.add_argument("-I", dest="includes", action="append", default=[])
+p.add_argument("-D", dest="defines", action="append", default=[])
+p.add_argument("--emit-ir", type=Path)
+a = p.parse_args()
+root = Path("@CMAKE_SOURCE_DIR@")
+codegen = Path("@CMAKE_CURRENT_BINARY_DIR@") / "extreme-codegen"
+a.output.parent.mkdir(parents=True, exist_ok=True)
 try:
-    with tempfile.TemporaryDirectory(prefix='extreme-cxx-') as temp:
-        irs=[]
-        for index,source in enumerate(a.sources):
-            ir=Path(temp)/f'input{index}.ll'
-            if source.suffix in ['.ll','.bc']:
-                irs.append(source.resolve());continue
-            cmd=['@EXTREME_CLANG@','--target=riscv32-unknown-none-elf','-march=rv32im','-mabi=ilp32',
-                 '-std=c++20','-O2','-ffreestanding','-fno-exceptions','-fno-rtti','-fno-threadsafe-statics',
-                 '-fno-vectorize','-fno-slp-vectorize','-fno-unroll-loops','-fno-discard-value-names',
-                 '-nostdinc++','-isystem','@EXTREME_LLVM_ROOT@/include/c++/v1',
-                 '-idirafter',str(root/'compiler/include/c'),'-I',str(root/'compiler/include'),'-I',str(root/'compiler'),
-                 '-include',str(root/'compiler/include/extreme/libcxx_config.h'),
-                 f'-DEC_BUS_BYTES={a.bits//8}',f'-DEC_BANK_WORDS={a.bank_words}',f'-DEC_BANKS={a.banks}',
-                 *['-I'+x for x in a.includes],*['-D'+x for x in a.defines],'-S','-emit-llvm',str(source),'-o',str(ir)]
-            subprocess.run(cmd,check=True);irs.append(ir)
-        linked=Path(temp)/'linked.bc'
-        subprocess.run(['@EXTREME_LLVM_LINK@',*[str(x) for x in irs],'-o',str(linked)],check=True)
+    with tempfile.TemporaryDirectory(prefix="extreme-cxx-") as temp:
+        irs = []
+        for index, source in enumerate(a.sources):
+            ir = Path(temp) / f"input{index}.ll"
+            if source.suffix in [".ll", ".bc"]:
+                irs.append(source.resolve())
+                continue
+            cmd = [
+                "@EXTREME_CLANG@",
+                "--target=riscv32-unknown-none-elf",
+                "-march=rv32im",
+                "-mabi=ilp32",
+                "-std=c++20",
+                "-O2",
+                "-ffreestanding",
+                "-fno-exceptions",
+                "-fno-rtti",
+                "-fno-threadsafe-statics",
+                "-fno-vectorize",
+                "-fno-slp-vectorize",
+                "-fno-unroll-loops",
+                "-fno-discard-value-names",
+                "-nostdinc++",
+                "-isystem",
+                "@EXTREME_LLVM_ROOT@/include/c++/v1",
+                "-idirafter",
+                str(root / "compiler/include/c"),
+                "-I",
+                str(root / "compiler/include"),
+                "-I",
+                str(root / "compiler"),
+                "-include",
+                str(root / "compiler/include/extreme/libcxx_config.h"),
+                f"-DEC_BUS_BYTES={a.bits//8}",
+                f"-DEC_BANK_WORDS={a.bank_words}",
+                f"-DEC_BANKS={a.banks}",
+                *["-I" + x for x in a.includes],
+                *["-D" + x for x in a.defines],
+                "-S",
+                "-emit-llvm",
+                str(source),
+                "-o",
+                str(ir),
+            ]
+            subprocess.run(cmd, check=True)
+            irs.append(ir)
+        linked = Path(temp) / "linked.bc"
+        subprocess.run(
+            ["@EXTREME_LLVM_LINK@", *[str(x) for x in irs], "-o", str(linked)], check=True
+        )
         if a.emit_ir:
-            subprocess.run(['@EXTREME_OPT@','-S',str(linked),'-o',str(a.emit_ir)],check=True)
-        subprocess.run([str(codegen),str(linked),str(a.output),str(a.bits),str(a.regs),str(a.banks),str(a.bank_words),a.entry],check=True)
+            subprocess.run(["@EXTREME_OPT@", "-S", str(linked), "-o", str(a.emit_ir)], check=True)
+        subprocess.run(
+            [
+                str(codegen),
+                str(linked),
+                str(a.output),
+                str(a.bits),
+                str(a.regs),
+                str(a.banks),
+                str(a.bank_words),
+                a.entry,
+            ],
+            check=True,
+        )
 except subprocess.CalledProcessError as e:
     raise SystemExit(e.returncode)

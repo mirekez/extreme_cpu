@@ -1,0 +1,13 @@
+{
+    "format": {
+        "line_width": 100,
+        "tab_size": 4,
+        "dangle_parens": true,
+        "command_case": "lower",
+        "keyword_case": "upper",
+        "max_subgroups_hwrap": 4,
+        "max_pargs_hwrap": 12,
+        "max_lines_hwrap": 1,
+        "min_prefix_chars": 0
+    }
+}

@@ -14,7 +14,10 @@ option(EXTREME_VERILATOR_TESTS "Register generated RTL tests" ON)
 add_library(extreme_rtl INTERFACE)
 target_include_directories(extreme_rtl INTERFACE "${CPPHDL_HOME}/include")
 target_compile_options(extreme_rtl INTERFACE -fno-strict-aliasing)
-target_compile_definitions(extreme_rtl INTERFACE EC_BITS=${EC_BITS} EC_DEPTH=${EC_DEPTH} EC_CORES=${EC_CORES} EC_BANKS=${EC_BANKS})
+target_compile_definitions(
+    extreme_rtl INTERFACE EC_BITS=${EC_BITS} EC_DEPTH=${EC_DEPTH} EC_CORES=${EC_CORES}
+                          EC_BANKS=${EC_BANKS}
+)
 add_executable(instructions arch/tests/instructions.cpp)
 add_test(NAME instructions COMMAND instructions)
 foreach(name LoadFifo StoreFifo Memory MemoryMux TasksControl System Tasks)
@@ -29,13 +32,21 @@ foreach(name LoadFifo StoreFifo Memory MemoryMux TasksControl System Tasks)
     target_link_libraries(${name}_cpp PRIVATE extreme_rtl)
     add_test(NAME ${name}.cpp COMMAND ${name}_cpp)
     if(EXTREME_VERILATOR_TESTS)
-        add_test(NAME ${name}.verilator COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/test.py
-            --flow verilator --test ${name} --bits ${EC_BITS} --depth ${EC_DEPTH} --cores ${EC_CORES} --banks ${EC_BANKS}
-            --build-dir ${CMAKE_BINARY_DIR}/rtl --cxx ${CMAKE_CXX_COMPILER} --cpphdl ${CPPHDL_HOME})
+        add_test(
+            NAME ${name}.verilator
+            COMMAND
+                ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/test.py --flow verilator --test
+                ${name} --bits ${EC_BITS} --depth ${EC_DEPTH} --cores ${EC_CORES} --banks
+                ${EC_BANKS} --build-dir ${CMAKE_BINARY_DIR}/rtl --cxx ${CMAKE_CXX_COMPILER}
+                --cpphdl ${CPPHDL_HOME}
+        )
         set_tests_properties(${name}.verilator PROPERTIES TIMEOUT 300)
     endif()
 endforeach()
 if(EXTREME_BUILD_COMPILER)
     add_subdirectory(compiler)
 endif()
-add_custom_target(synth COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/synth.py WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+add_custom_target(
+    synth COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/synth.py
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)

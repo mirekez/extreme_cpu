@@ -1,1 +1,3 @@
-extern "C" unsigned kernel(){return 42;}
+extern "C" unsigned kernel() {
+    return 42;
+}
