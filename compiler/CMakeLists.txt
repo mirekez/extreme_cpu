@@ -3,6 +3,7 @@ find_package(LLVM REQUIRED CONFIG HINTS "${EXTREME_LLVM_ROOT}/lib/cmake/llvm")
 if(NOT LLVM_VERSION_MAJOR EQUAL 21)
     message(FATAL_ERROR "Extreme currently requires LLVM 21")
 endif()
+
 find_program(
     EXTREME_CLANG NAMES clang++ clang++-21 HINTS "${EXTREME_LLVM_ROOT}/bin" REQUIRED
     NO_DEFAULT_PATH
@@ -20,26 +21,72 @@ file(CHMOD ${CMAKE_BINARY_DIR}/bin/extreme-cxx PERMISSIONS OWNER_READ OWNER_WRIT
 )
 add_executable(Compiled_cpp ${CMAKE_SOURCE_DIR}/tests/compiled.cpp)
 target_link_libraries(Compiled_cpp PRIVATE extreme_rtl)
-set(case_names hello scalars calls libraries copy calls_copy copy_bandwidth)
-set(case_results 42 13630 96 205 42 37 0)
+set(
+    case_names
+    hello
+    scalars
+    calls
+    libraries
+    copy
+    calls_copy
+    copy_bandwidth
+    network
+    reentrant
+    c_frontend
+    kernel_abi
+    context
+    varargs
+    memory_moves
+    wide_intrinsics
+)
+set(
+    case_results
+    42
+    13630
+    96
+    205
+    42
+    37
+    0
+    42
+    42
+    42
+    42
+    42
+    42
+    42
+    42
+)
 if(EC_SIMD)
-    list(APPEND case_names simd)
-    list(APPEND case_results 42)
+    list(APPEND case_names simd simd_pairs)
+    list(APPEND case_results 42 42)
 endif()
 set(images)
-file(GLOB_RECURSE target_headers CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/include/*
-     ${CMAKE_CURRENT_SOURCE_DIR}/tasks/*.h ${CMAKE_CURRENT_SOURCE_DIR}/simd/*.h
+file(
+    GLOB_RECURSE
+    target_headers
+    CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/*
+    ${CMAKE_CURRENT_SOURCE_DIR}/tasks/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/simd/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/context/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/runtime/*
 )
 foreach(name expected IN ZIP_LISTS case_names case_results)
+    set(source ${CMAKE_CURRENT_SOURCE_DIR}/tests/${name}.cpp)
+    if(name STREQUAL "c_frontend")
+        set(source ${CMAKE_CURRENT_SOURCE_DIR}/tests/${name}.c)
+    endif()
+    set(abi_args)
+    if(name STREQUAL "reentrant" OR name STREQUAL "context" OR name STREQUAL "varargs")
+        set(abi_args --reentrant)
+    endif()
     set(image ${CMAKE_CURRENT_BINARY_DIR}/images/${name}.ecx)
     add_custom_command(
         OUTPUT ${image}
-        COMMAND
-            ${Python3_EXECUTABLE} ${CMAKE_BINARY_DIR}/bin/extreme-cxx
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/${name}.cpp -o ${image} --bits ${EC_BITS} --banks
-            ${EC_BANKS}
-        DEPENDS extreme-codegen ${CMAKE_CURRENT_SOURCE_DIR}/tests/${name}.cpp
-                ${CMAKE_BINARY_DIR}/bin/extreme-cxx ${target_headers}
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_BINARY_DIR}/bin/extreme-cxx ${source} -o ${image}
+                --bits ${EC_BITS} --banks ${EC_BANKS} ${abi_args}
+        DEPENDS extreme-codegen ${source} ${CMAKE_BINARY_DIR}/bin/extreme-cxx ${target_headers}
         VERBATIM
     )
     list(APPEND images ${image})
@@ -137,4 +184,112 @@ if(EXTREME_VERILATOR_TESTS)
             ${EC_SIMD_ARGS}
     )
     set_tests_properties(compiler.task_intrinsics.verilator PROPERTIES TIMEOUT 600)
+endif()
+
+# Each task owns enough activation records for the bounded hardware call depth.
+set(reentrant_tasks_image ${CMAKE_CURRENT_BINARY_DIR}/images/reentrant_tasks.ecx)
+add_custom_command(
+    OUTPUT ${reentrant_tasks_image}
+    COMMAND
+        ${Python3_EXECUTABLE} ${CMAKE_BINARY_DIR}/bin/extreme-cxx
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/reentrant_tasks.cpp --reentrant --bits ${EC_BITS} --banks
+        4 --bank-words 16384 -o ${reentrant_tasks_image}
+    DEPENDS extreme-codegen ${CMAKE_CURRENT_SOURCE_DIR}/tests/reentrant_tasks.cpp
+            ${CMAKE_BINARY_DIR}/bin/extreme-cxx ${target_headers}
+    VERBATIM
+)
+add_custom_target(reentrant_tasks_image ALL DEPENDS ${reentrant_tasks_image})
+add_executable(ReentrantTasks_cpp ${CMAKE_SOURCE_DIR}/tests/compiled.cpp)
+target_link_libraries(ReentrantTasks_cpp PRIVATE extreme_features)
+target_include_directories(ReentrantTasks_cpp PRIVATE ${CPPHDL_HOME}/include)
+target_compile_options(ReentrantTasks_cpp PRIVATE -fno-strict-aliasing)
+target_compile_definitions(
+    ReentrantTasks_cpp PRIVATE EC_BITS=${EC_BITS} EC_DEPTH=16 EC_CORES=3 EC_BANKS=4
+                               EC_BANK_WORDS=16384
+)
+add_test(NAME compiler.reentrant_tasks.cpp COMMAND ReentrantTasks_cpp ${reentrant_tasks_image} 42
+                                                   5000000 stalls
+)
+if(EXTREME_VERILATOR_TESTS)
+    add_test(
+        NAME compiler.reentrant_tasks.verilator
+        COMMAND
+            ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/test.py --flow verilator --test
+            Compiled --bits ${EC_BITS} --depth 16 --cores 3 --banks 4 --words 16384 --image
+            ${reentrant_tasks_image} --expected 42 --mode stalls --build-dir
+            ${CMAKE_BINARY_DIR}/rtl --cxx ${CMAKE_CXX_COMPILER} --cpphdl ${CPPHDL_HOME}
+            ${EC_SIMD_ARGS}
+    )
+    set_tests_properties(compiler.reentrant_tasks.verilator PROPERTIES TIMEOUT 600)
+endif()
+
+add_executable(Integer64Runtime_cpp runtime/tests/integer64.cpp)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(
+        Integer64Runtime_cpp PRIVATE -fsanitize=undefined -fno-sanitize-recover=all
+    )
+    target_link_options(Integer64Runtime_cpp PRIVATE -fsanitize=undefined)
+endif()
+add_test(NAME compiler.integer64.runtime COMMAND Integer64Runtime_cpp)
+set(integer64_images)
+foreach(abi static reentrant)
+    set(image ${CMAKE_CURRENT_BINARY_DIR}/images/integer64_${abi}.ecx)
+    if(abi STREQUAL "reentrant")
+        set(abi_args --reentrant)
+    else()
+        set(abi_args -DEXTREME_STATIC_ABI=1)
+    endif()
+    add_custom_command(
+        OUTPUT ${image}
+        COMMAND
+            ${Python3_EXECUTABLE} ${CMAKE_BINARY_DIR}/bin/extreme-cxx
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/integer64.cpp ${abi_args} --bits ${EC_BITS} --banks 4
+            --bank-words 16384 -o ${image}
+        DEPENDS extreme-codegen ${CMAKE_CURRENT_SOURCE_DIR}/tests/integer64.cpp
+                ${CMAKE_BINARY_DIR}/bin/extreme-cxx ${target_headers}
+        VERBATIM
+    )
+    list(APPEND integer64_images ${image})
+    add_test(NAME compiler.integer64.${abi}.cpp COMMAND ReentrantTasks_cpp ${image} 42 20000000
+                                                        stalls
+    )
+endforeach()
+add_custom_target(integer64_images ALL DEPENDS ${integer64_images})
+if(EXTREME_VERILATOR_TESTS)
+    add_test(
+        NAME compiler.integer64.verilator
+        COMMAND
+            ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integer64.py
+            ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${CPPHDL_HOME} ${CMAKE_CXX_COMPILER} ${EC_BITS}
+            ${EC_SIMD_ENABLED}
+    )
+    set_tests_properties(compiler.integer64.verilator PROPERTIES TIMEOUT 600)
+endif()
+
+# Dynamic local scopes must reclaim their bounded per-activation arena.
+set(dynamic_locals_image ${CMAKE_CURRENT_BINARY_DIR}/images/dynamic_locals.ecx)
+add_custom_command(
+    OUTPUT ${dynamic_locals_image}
+    COMMAND
+        ${Python3_EXECUTABLE} ${CMAKE_BINARY_DIR}/bin/extreme-cxx
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/dynamic_locals.cpp --reentrant --bits ${EC_BITS} --banks 4
+        --bank-words 16384 -o ${dynamic_locals_image}
+    DEPENDS extreme-codegen ${CMAKE_CURRENT_SOURCE_DIR}/tests/dynamic_locals.cpp
+            ${CMAKE_BINARY_DIR}/bin/extreme-cxx ${target_headers}
+    VERBATIM
+)
+add_custom_target(dynamic_locals_image ALL DEPENDS ${dynamic_locals_image})
+add_test(NAME compiler.dynamic_locals.cpp COMMAND ReentrantTasks_cpp ${dynamic_locals_image} 42
+                                                  5000000 stalls
+)
+if(EXTREME_VERILATOR_TESTS)
+    add_test(
+        NAME compiler.dynamic_locals.verilator
+        COMMAND
+            ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/test.py --flow verilator --test
+            Compiled --bits ${EC_BITS} --depth 16 --cores 3 --banks 4 --words 16384 --image
+            ${dynamic_locals_image} --expected 42 --mode stalls --build-dir ${CMAKE_BINARY_DIR}/rtl
+            --cxx ${CMAKE_CXX_COMPILER} --cpphdl ${CPPHDL_HOME} ${EC_SIMD_ARGS}
+    )
+    set_tests_properties(compiler.dynamic_locals.verilator PROPERTIES TIMEOUT 600)
 endif()

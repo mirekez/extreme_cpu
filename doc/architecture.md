@@ -159,14 +159,22 @@ least significant end. The opcode definitions, decode, intermediate values,
 execution logic, and compiler intrinsics are guarded by `#ifdef EC_SIMD`.
 Disabled cores fault on SIMD encodings; existing scalar encodings are unchanged.
 
-The twelve operations are add, subtract, multiply, AND, OR, XOR, logical left
+The lane operations are add, subtract, multiply, AND, OR, XOR, logical left
 and right shifts, arithmetic right shift, unsigned and signed less-than, and
 scalar broadcast. Add/subtract/multiply wrap within each lane; no carry crosses
 lane boundaries. Shifts use the low five bits of the corresponding right-hand
 lane. Comparisons produce 0 or 1. Broadcast replicates the source's low 32 bits
 into all lanes. Sources are read before the destination is written, permitting
-source/destination aliasing. There are no masks, saturation, reductions,
-floating-point operations, or alternate lane widths in this extension.
+source/destination aliasing. There is no predication, saturation, reduction,
+floating-point arithmetic, or alternate arithmetic lane width.
+
+VADDC32 writes the unsigned carry-out of each 32-bit addition as a lane value
+of 0 or 1. VSLTU32 supplies the corresponding subtraction borrow. Neither
+changes hidden flags. VPAIRSWAP32, VPAIRUP32, and VPAIRDOWN32 move 32-bit values
+within each adjacent [low,high] pair. The compiler combines these moves and
+32-bit arithmetic to add or subtract BUS_WIDTH/64 independent 64-bit values.
+No 64-bit adder, subtractor, multiplier, or divider is added; ordinary VADD32
+and VSUB32 still have no implicit carry between lanes.
 
 SIMD instructions access registers only. Software uses existing full-width
 loads and stores for vector data. They follow the ordinary serial instruction
@@ -176,7 +184,7 @@ combinational multiply and shift units can affect area and timing when enabled;
 physical timing has not been characterized.
 
 [C++ SIMD intrinsics](../compiler/simd/README.md) lower aligned full-word memory
-operands to loads, a SIMD instruction, and a store. The compiler drains prior
+operands to loads, SIMD instructions, and a store. The compiler drains prior
 stores before input reads and drains the result store before continuing. LLVM
 automatic vectorization remains disabled. SIMD results can overwrite occupied
 return-address lanes if assembly software selects a register used by SP; the
@@ -288,7 +296,10 @@ Return PCs are rounded up to a bus-word boundary, so the assembler/compiler
 must pad the continuation. No general register save/restore is implicit.
 
 STACKLIMIT bounds the available return lanes and can change only with SP zero.
-Reset permits `EC_REGS * (BUS_WIDTH/32)` slots. Software must preserve occupied
+Reset permits `EC_REGS * (BUS_WIDTH/32)` slots. GETSP reads the occupied count;
+SETSP restores a count no greater than STACKLIMIT. Software saves/restores return
+registers explicitly when switching contexts; these instructions add no memory
+stack or automatic forwarding. Software must preserve occupied
 lanes and any caller values it needs. Underflow, overflow, and misaligned return
 or indirect-call addresses fault the core.
 
@@ -297,9 +308,16 @@ depth, and stores live values in static memory locations. Modules issuing tasks
 have 33 private context frames: one per task slot plus one for boot code. They
 reserve r7 as the frame base, allowing task instances to call shared helpers
 without sharing spills or call mailboxes. Globals remain shared. The compiler
-supports exception-free C++ kernels and explicit task/SIMD intrinsics; recursion,
-RTTI, exceptions, arbitrary LLVM vector types, and a hosted runtime are outside
-the implemented subset. See the [compiler ABI](../compiler/README.md).
+supports exception-free C/C++ kernels and explicit task/SIMD intrinsics.
+Optional `--reentrant` lowering allocates a separate memory activation record
+for each call, enabling recursion and indirect calls within the hardware return
+capacity. Return addresses remain in registers. Integer 64-bit operations lower
+to 32-bit software sequences; SIMD-enabled builds use paired lanes for add,
+subtract, bitwise operations, and fixed logical shifts by 32. RTTI, exceptions,
+arbitrary LLVM vector types, and hardware atomic operations remain outside the
+implemented subset. The native mikOS port supplies its own libc and syscall
+runtime above this ABI. Binary32/binary64 math uses software helpers; the CPU
+still contains only 32-bit arithmetic lanes. See the [compiler ABI](../compiler/README.md).
 
 ## Dependent task dispatch
 
@@ -366,3 +384,32 @@ hardware dimensions are not automatically forwarded to that target. Use
 `scripts/synth.py` arguments to select other synthesis dimensions. Yosys/slang
 synthesis and `check -assert` validate generated logic; placement, timing,
 area targets, and power remain uncharacterized.
+
+
+## Optional polling board
+
+With `EC_DEVICES`, the last MemoryMux bank hosts the synthesizable peripheral
+controller and the preceding banks host RAM. UART TX/RX, a wrapping cycle
+counter, Ethernet packet buffers and shutdown status are accessed through
+ordinary scalar MMIO loads/stores. Every request and response follows the
+existing registered memory-controller protocol. There are no interrupts or DMA.
+
+Ethernet RX and TX each buffer one frame of at most 2048 bytes. Software reads
+RX length, copies the packet and releases it; software fills TX, writes length
+and submits it. Buffer ownership prevents replacing a packet during transfer.
+Stream ports use bus-width data with byte count, last, valid and ready. They
+connect to a separate physical MAC/PHY or to the simulator's raw-frame media
+adapter. See [the register map and board tests](../devices/README.md).
+
+The mikOS kernel profile exercises polling UART, task dispatch, shared C++
+containers/allocator, software floating point, ARP and ICMP. Its 512-bit userspace
+profile links native musl, BusyBox and Dropbear with the shared ext4, process,
+terminal and TCP implementations. BusyBox and Dropbear are prelinked Extreme
+entries selected by rootfs executable descriptors, rather than dynamically loaded
+ELF images. Fork snapshots user data and live activation records. Scheduling and
+signal delivery are cooperative at syscall boundaries; processes run on core zero.
+The compiler's reentrant ABI provides recursive/function-pointer calls with
+bounded activation storage in memory, while return addresses occupy register
+lanes. Both the C++ and generated-SystemVerilog boards accept UART input and
+transport raw Ethernet frames. The SSH regression uses the same isolated,
+unencrypted test profile as the Tribe acceptance suite; it is not production SSH.

@@ -33,8 +33,10 @@ a host loader for the regression setup; `rtl/Core.h` and `rtl/MemoryMux.h` expos
 the interfaces for integrating different memory controllers.
 
 The prototype runs assembled programs and freestanding C++ kernels compiled
-with the Conda LLVM 21 frontend and custom IR backend. A production compiler, OS,
-and physical memory controller are future work. Optional SIMD32 is implemented.
+with the Conda LLVM 21 frontend and custom IR backend. The native mikOS port
+also runs prelinked musl, BusyBox and Dropbear; see `~/mikos/tests/extreme/README.md`
+for its acceptance tests and prototype limits. A production compiler and physical
+memory controller remain future work. Optional SIMD32 is implemented.
 Tests report modeled copy bandwidth; physical timing, area, and power are not yet characterized.
 
 Run `make synth` for a complete-system synthesis smoke check using Yosys with

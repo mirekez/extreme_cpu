@@ -10,6 +10,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
 p.add_argument("--simd", action="store_true", help="include SIMD hardware")
+p.add_argument("--peripherals", action="store_true", help="synthesize the standalone MMIO devices")
 p.add_argument("--bits", type=int, default=64)
 p.add_argument("--depth", type=int, default=2)
 p.add_argument("--cores", type=int, default=1)
@@ -27,6 +28,8 @@ if not yosys:
 work = ROOT / "build" / f"synthesis-b{a.bits}-d{a.depth}-c{a.cores}-m{a.banks}-w{a.words}"
 if a.simd:
     work = work.with_name(work.name + "-simd")
+if a.peripherals:
+    work = work.with_name(work.name + "-peripherals")
 work.mkdir(parents=True, exist_ok=True)
 gen = work / "generated"
 flags = [
@@ -44,7 +47,7 @@ subprocess.run(
         str(cpphdl / "build/cpphdl"),
         "--generated-dir",
         str(gen),
-        str(ROOT / "tests/memcpy.cpp"),
+        str(ROOT / ("devices/tests/peripherals.cpp" if a.peripherals else "tests/memcpy.cpp")),
         "--",
         *flags,
     ],
@@ -54,9 +57,10 @@ sv = sorted(gen.glob("*_pkg.sv")) + sorted(
     x for x in gen.glob("*.sv") if not x.name.endswith("_pkg.sv")
 )
 script = work / "synth.ys"
+top = "Peripherals" if a.peripherals else "System"
 script.write_text(
-    "read_slang --top System " + " ".join(str(f.relative_to(work)) for f in sv) + "\n"
-    "hierarchy -check -top System\nsynth -top System -noabc\ncheck -assert\n"
+    f"read_slang --top {top} " + " ".join(str(f.relative_to(work)) for f in sv) + "\n"
+    f"hierarchy -check -top {top}\nsynth -top {top} -noabc\ncheck -assert\n"
     f'write_verilog -noattr "{work}/gates.v"\nstat\n'
 )
 with (work / "synthesis.log").open("w") as out:

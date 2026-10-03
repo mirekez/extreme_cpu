@@ -63,3 +63,8 @@ add_custom_target(
     synth COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/synth.py ${EC_SIMD_ARGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
+
+option(EXTREME_BUILD_DEVICES "Build the UART/Ethernet board simulator" ON)
+if(EXTREME_BUILD_DEVICES)
+    add_subdirectory(devices)
+endif()

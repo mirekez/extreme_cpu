@@ -14,8 +14,26 @@ struct Harness {
     bool memory_enable_in[EC_BANKS]{};
     u<32> entry_in[EC_CORES]{};
 
+#ifdef EC_DEVICES
+    bool uart_ready_in = true, uart_rx_valid_in = false;
+    u<8> uart_rx_data_in{};
+    bool ethernet_rx_valid_in = false, ethernet_rx_last_in = false, ethernet_tx_ready_in = true;
+    u<32> ethernet_rx_count_in{};
+    Word ethernet_rx_data_in{};
+#endif
+
     Harness() {
 #ifndef VERILATOR
+#ifdef EC_DEVICES
+        dut.uart_ready_in = _ASSIGN(uart_ready_in);
+        dut.uart_rx_valid_in = _ASSIGN(uart_rx_valid_in);
+        dut.uart_rx_data_in = _ASSIGN(uart_rx_data_in);
+        dut.ethernet_rx_valid_in = _ASSIGN(ethernet_rx_valid_in);
+        dut.ethernet_rx_last_in = _ASSIGN(ethernet_rx_last_in);
+        dut.ethernet_rx_count_in = _ASSIGN(ethernet_rx_count_in);
+        dut.ethernet_rx_data_in = _ASSIGN(ethernet_rx_data_in);
+        dut.ethernet_tx_ready_in = _ASSIGN(ethernet_tx_ready_in);
+#endif
         dut.task_debug_id_in = _ASSIGN(task_debug_id_in);
         dut.run_in = _ASSIGN(run_in);
         dut.host_mode_in = _ASSIGN(host_mode_in);
@@ -37,6 +55,16 @@ struct Harness {
     void settle() {
         ++_system_clock;
 #ifdef VERILATOR
+#ifdef EC_DEVICES
+        dut.uart_ready_in = uart_ready_in;
+        dut.uart_rx_valid_in = uart_rx_valid_in;
+        dut.uart_rx_data_in = uart_rx_data_in;
+        dut.ethernet_rx_valid_in = ethernet_rx_valid_in;
+        dut.ethernet_rx_last_in = ethernet_rx_last_in;
+        dut.ethernet_rx_count_in = ethernet_rx_count_in;
+        drive_word(dut.ethernet_rx_data_in, ethernet_rx_data_in);
+        dut.ethernet_tx_ready_in = ethernet_tx_ready_in;
+#endif
         dut.task_debug_id_in = task_debug_id_in;
         dut.run_in = run_in;
         dut.host_mode_in = host_mode_in;

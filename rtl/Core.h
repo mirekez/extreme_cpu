@@ -254,17 +254,17 @@ public:
                     if (code == 50 || code == 51) {
                         n = 4;
                     }
-                    if (code == 67 || code == 68) {
+                    if (code == 67 || code == 68 || code == 70 || code == 71) {
                         n = 2;
                     }
                     if (code == 64 || code == 66 || code == 69) {
                         n = 5;
                     }
 #ifdef EC_SIMD
-                    if (code >= 128 && code <= 138) {
+                    if ((code >= 128 && code <= 138) || code == 140) {
                         n = 4;
                     }
-                    if (code == 139) {
+                    if (code == 139 || (code >= 141 && code <= 143)) {
                         n = 3;
                     }
 #endif
@@ -299,7 +299,8 @@ public:
                 y = (uint32_t)regs[b];
                 lv._next = 0;
                 state._next = 0;
-                if ((op == 16 || op == 65 || op == 67 || op == 68) && dst >= EC_REGS) {
+                if ((op == 16 || op == 65 || op == 67 || op == 68 || op == 70 || op == 71) &&
+                    dst >= EC_REGS) {
                     bad._next = 1;
                     done._next = 1;
                 } else if ((op == 17 || op == 48 || op == 49 || op == 50 || op == 51 ||
@@ -309,8 +310,9 @@ public:
                     bad._next = 1;
                     done._next = 1;
 #ifdef EC_SIMD
-                } else if (op >= 128 && op <= 139) {
-                    if (dst >= EC_REGS || left >= EC_REGS || (op != 139 && right >= EC_REGS)) {
+                } else if (op >= 128 && op <= 143) {
+                    if (dst >= EC_REGS || left >= EC_REGS ||
+                        ((op <= 138 || op == 140) && right >= EC_REGS)) {
                         bad._next = 1;
                         done._next = 1;
                     } else {
@@ -344,6 +346,14 @@ public:
                                 simd_result = int32_t(x) < int32_t(y) ? 1 : 0;
                             } else if (op == 139) {
                                 simd_result = uint32_t(regs[a]);
+                            } else if (op == 140) {
+                                simd_result = uint32_t(x + y) < x ? 1 : 0;
+                            } else if (op == 141) {
+                                simd_result = uint32_t(regs[a] >> ((lane ^ 1) * 32));
+                            } else if (op == 142 && (lane & 1)) {
+                                simd_result = uint32_t(regs[a] >> ((lane - 1) * 32));
+                            } else if (op == 143 && !(lane & 1)) {
+                                simd_result = uint32_t(regs[a] >> ((lane + 1) * 32));
                             }
                             simd_value = simd_value | (logic<EC_BITS>(simd_result) << (lane * 32));
                         }
@@ -504,6 +514,15 @@ public:
                     scalar_address._next = x;
                     sv._next = 1;
                     state._next = 3;
+                } else if (op == 70) {
+                    regs[d]._next = uint32_t(sp);
+                } else if (op == 71) {
+                    if (uint32_t(regs[d]) > uint32_t(stack_limit)) {
+                        bad._next = 1;
+                        done._next = 1;
+                    } else {
+                        sp._next = uint32_t(regs[d]);
+                    }
                 } else if (op == 69) {
                     if (sp != 0 || immediate == 0 || immediate > EC_REGS * (EC_BITS / 32)) {
                         bad._next = 1;

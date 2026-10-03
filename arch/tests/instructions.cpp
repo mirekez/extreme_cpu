@@ -51,6 +51,12 @@ int main() {
         offset = extended.code.size();
         extended.emit(Opcode::CallRegister, 7);
         check(extended.code[offset] == 0x44 && extended.code[offset + 1] == 7);
+        for (auto opcode : {Opcode::ReadStackPointer, Opcode::WriteStackPointer}) {
+            Assembler context(bits);
+            context.emit(opcode, 3);
+            check(length(uint8_t(opcode)) == 2);
+            check(context.code == std::vector<uint8_t>({uint8_t(opcode), 3}));
+        }
         Assembler task(bits);
         task.emit(Opcode::TaskIssue, 2, 3, 4);
         check(task.code == std::vector<uint8_t>({0x50, 2, 3, 4}));
@@ -61,24 +67,24 @@ int main() {
         check(length(0x51) == 3 && length(0x53) == 2 && length(0x54) == 2 && length(0x55) == 3 &&
               length(0x56) == 2);
 #ifdef EC_SIMD
-        for (unsigned op = 0x80; op <= 0x8b; ++op) {
+        for (unsigned op = 0x80; op <= 0x8f; ++op) {
             Assembler simd(bits);
             // Exercise padding when the instruction cannot fit at the end of a word.
             simd.code.resize(bits / 8 - 1, 0);
             simd.emit(Opcode(op), 2, 3, 4);
             unsigned start = bits / 8;
             check(simd.code[start] == op && simd.code[start + 1] == 2 && simd.code[start + 2] == 3);
-            check(length(op) == (op == 0x8b ? 3 : 4));
-            if (op != 0x8b) {
+            check(length(op) == (op == 0x8b || op >= 0x8d ? 3 : 4));
+            if (op != 0x8b && op < 0x8d) {
                 check(simd.code[start + 3] == 4);
             }
         }
 #else
-        for (unsigned op = 0x80; op <= 0x8b; ++op) {
+        for (unsigned op = 0x80; op <= 0x8f; ++op) {
             check(length(op) == 0);
         }
 #endif
-        check(length(0x8c) == 0);
+        check(length(0x90) == 0);
         Assembler branch(bits);
         branch.emit(Opcode::Jump, 0, 0, 0, 0x12345678);
         check(branch.code[1] == 0x78 && branch.code[4] == 0x12);

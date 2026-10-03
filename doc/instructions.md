@@ -21,7 +21,7 @@ immediate instructions are needed.
 | Bytes | Encoding | Instructions |
 |---:|---|---|
 | 1 | op | NOP, HALT, BARRIER, COPY, LOOP, END, NEXTSRC, NEXTDST, RET |
-| 2 | op,register | JMPR, CALLR, TFINISH, TABORT, TID |
+| 2 | op,register | JMPR, CALLR, GETSP, SETSP, TFINISH, TABORT, TID |
 | 3 | op,d,a | MOV, LD, ST, TDISARM, TSTATE, VSPLAT32 |
 | 4 | op,d,a,b | Scalar and SIMD binary ALU operations, TISSUE, TREAD |
 | 4 | op,d,a,flags | LDS, STS; the last byte is a memory flag, not a register |
@@ -82,6 +82,8 @@ skip to the next word boundary.
 | 43 | JMPR a | 2: op,a | Jump to aligned byte address r[a] |
 | 44 | CALLR a | 2: op,a | Save continuation, call aligned byte address r[a] |
 | 45 | STACKLIMIT imm32 | 5: op,imm32 | Set allowed return slots with SP = 0 |
+| 46 | GETSP d | 2: op,d | Zero-extend the occupied return-lane count into r[d] |
+| 47 | SETSP a | 2: op,a | Set SP from low32(r[a]); values above STACKLIMIT fault |
 | 50 | TISSUE d,a,b | 4: op,d,a,b | Issue ID r[d], entry r[a], mask r[b]; status to r[d] |
 | 51 | TDISARM d,a | 3: op,d,a | Disarm ID r[a]; status to r[d] |
 | 52 | TREAD d,a,b | 4: op,d,a,b | Result r[d] and status r[b] for task ID r[a] |
@@ -182,6 +184,11 @@ Underflow, overflow, and misaligned targets fault. STACKLIMIT accepts
 1..N*(BUS_WIDTH/32), only with SP zero; reset permits the full capacity.
 There are no push/pop instructions, automatic register saves, or data stack.
 Software must preserve occupied return lanes and any caller values it needs.
+GETSP/SETSP allow software to save and restore a suspended call chain. SETSP
+changes only the occupied count; it neither copies register contents nor accesses
+memory. Zero and the current stack limit are both valid counts. A source or
+destination register outside the configured register file faults, as for other
+scalar instructions.
 See [compiler ABI](../compiler/README.md) for the implemented convention.
 
 ## Optional SIMD32 extension
@@ -196,8 +203,9 @@ Each register contains BUS_WIDTH/32 independent lanes: lane i occupies bits
 32*i+31:32*i, with lane zero in the least significant bits. Every SIMD
 instruction computes all lanes in the execute stage and replaces the entire
 destination register. Sources are read before the destination is changed;
-`d == a`, `d == b`, and `d == a == b` are legal. No masks, saturation, lane
-crossing, flags, or implicit memory accesses are introduced.
+`d == a`, `d == b`, and `d == a == b` are legal. There are no hidden flags,
+predication, saturation, or implicit memory accesses. Explicit carry masks and
+fixed moves between adjacent lanes support software 64-bit arithmetic.
 
 | Opcode (hex) | Mnemonic | Bytes / fields | Per-lane operation |
 |---|---|---|---|
@@ -213,6 +221,10 @@ crossing, flags, or implicit memory accesses are introduced.
 | 89 | VMUL32 d,a,b | 4: op,d,a,b | Low 32 bits of a * b |
 | 8A | VSLT32 d,a,b | 4: op,d,a,b | Signed a < b, producing 0 or 1 |
 | 8B | VSPLAT32 d,a | 3: op,d,a | Copy a[31:0] into every destination lane |
+| 8C | VADDC32 d,a,b | 4: op,d,a,b | Unsigned carry-out of a + b, producing 0 or 1 (sum is not written) |
+| 8D | VPAIRSWAP32 d,a | 3: op,d,a | Each adjacent [low,high] pair becomes [high,low] |
+| 8E | VPAIRUP32 d,a | 3: op,d,a | Each adjacent [low,high] pair becomes [0,low] |
+| 8F | VPAIRDOWN32 d,a | 3: op,d,a | Each adjacent [low,high] pair becomes [high,0] |
 
 Comparisons produce integer 1, not an all-ones mask. Add/subtract/multiply
 never carry into neighboring lanes. Shifts use each corresponding right-hand
@@ -224,8 +236,24 @@ address lanes if software selects a register occupied by the return stack.
 
 C++ intrinsics are in [compiler/simd/simd.h](../compiler/simd/simd.h); see
 [their contract](../compiler/simd/README.md). LLVM automatic vectorization is
-still disabled. Opcodes 8C–BF remain reserved; floating point, other lane widths,
+still disabled. Opcodes 90–BF remain reserved; floating point, other lane widths,
 SIMD division, reductions, and saturation are not implemented.
+
+Each adjacent pair represents a little-endian 64-bit value: lane 2*i is the low
+word and lane 2*i+1 is the high word. Pair moves never cross into another pair.
+There is no 64-bit ALU. To add BUS_WIDTH/64 independent pairs modulo 2^64:
+
+```text
+VADDC32 r5, r2, r3
+VPAIRUP32 r5, r5
+VADD32 r4, r2, r3
+VADD32 r4, r4, r5
+```
+
+For subtraction, use VSLTU32 for the borrow mask and VSUB32 for both arithmetic
+steps. High-word overflow is discarded. The carry/borrow source lanes must be
+read before overwriting either input. These sequences have no data-dependent
+branches. The `add64` and `sub64` C++ intrinsics emit these sequences.
 
 For a nonzero word count, this adds the same 32-bit bias to every input lane:
 

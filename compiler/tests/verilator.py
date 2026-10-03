@@ -44,9 +44,18 @@ cases = [
     ("libraries", 205),
     ("copy", 42),
     ("calls_copy", 37),
+    ("network", 42),
+    ("reentrant", 42),
+    ("c_frontend", 42),
+    ("kernel_abi", 42),
+    ("context", 42),
+    ("varargs", 42),
+    ("memory_moves", 42),
+    ("wide_intrinsics", 42),
 ]
 if simd == "ON":
     cases.append(("simd", 42))
+    cases.append(("simd_pairs", 42))
 for name, value in cases:
     subprocess.run(
         [str(exe), str(images / (name + ".ecx")), str(value), "5000000", "stalls"], check=True

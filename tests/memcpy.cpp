@@ -356,8 +356,36 @@ struct SystemTest : Harness {
         }
     }
 
+    void stackPointerAccess() {
+        reset();
+        for (unsigned core = 0; core < EC_CORES; ++core) {
+            Assembler p(EC_BITS);
+            p.li(0, 0x12345678);
+            p.emit(Opcode::StackLimit, 0, 0, 0, 3);
+            p.li(2, 3);
+            p.emit(Opcode::WriteStackPointer, 2);
+            p.emit(Opcode::ReadStackPointer, 3);
+            p.li(2, 0);
+            p.emit(Opcode::WriteStackPointer, 2);
+            p.emit(Opcode::ReadStackPointer, 4);
+            p.emit(Opcode::Halt);
+            program(core, p);
+        }
+        execute(true);
+        for (unsigned index : {0u, 3u, 4u}) {
+            debug_register_index_in = index;
+            settle();
+            for (unsigned core = 0; core < EC_CORES; ++core) {
+                require(read_word(OUT(debug_register_out[core])) == Word(index == 0   ? 0x12345678u
+                                                                         : index == 3 ? 3u
+                                                                                      : 0u),
+                        "GETSP/SETSP changed register contents or returned the wrong count");
+            }
+        }
+    }
+
     void faults() {
-        for (unsigned kind = 0; kind < 23; ++kind) {
+        for (unsigned kind = 0; kind < 27; ++kind) {
             reset();
             for (unsigned c = 0; c < EC_CORES; ++c) {
                 Assembler p(EC_BITS);
@@ -437,6 +465,17 @@ struct SystemTest : Harness {
                     if (kind == 22) {
                         p.emit(Opcode::TaskAbort, 0);
                     }
+                    if (kind == 23) {
+                        p.emit(Opcode::ReadStackPointer, EC_REGS);
+                    }
+                    if (kind == 24) {
+                        p.emit(Opcode::WriteStackPointer, EC_REGS);
+                    }
+                    if (kind == 25 || kind == 26) {
+                        p.emit(Opcode::StackLimit, 0, 0, 0, 2);
+                        p.li(2, kind == 25 ? 3 : 0xffffffffu);
+                        p.emit(Opcode::WriteStackPointer, 2);
+                    }
                     if (kind == 15) {
                         p.emit(Opcode::StackLimit, 0, 0, 0, EC_REGS * (EC_BITS / 32) + 1);
                     }
@@ -504,6 +543,7 @@ int main() {
         t.math();
         t.scalar_memory_and_calls();
         t.scalar_and_branches();
+        t.stackPointerAccess();
         t.faults();
         std::cout << "System PASS BUS_WIDTH=" << EC_BITS << " depth=" << EC_DEPTH << '\n';
         return 0;

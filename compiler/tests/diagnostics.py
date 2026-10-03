@@ -163,6 +163,32 @@ cases.extend(
             "invalid SIMD intrinsic signature" if simd_enabled else "unresolved",
         ),
         (
+            "simd_pair_source",
+            dedent("""\
+            extern "C" void __extreme_simd_pair_up32(unsigned*, unsigned);
+            unsigned data[16];
+
+            extern "C" unsigned kernel() {
+                __extreme_simd_pair_up32(data, 42);
+                return 0;
+            }
+            """),
+            "invalid SIMD intrinsic signature" if simd_enabled else "unresolved",
+        ),
+        (
+            "simd_carry_source",
+            dedent("""\
+            extern "C" void __extreme_simd_carry32(unsigned*, unsigned*, unsigned);
+            unsigned data[16];
+
+            extern "C" unsigned kernel() {
+                __extreme_simd_carry32(data, data, 42);
+                return 0;
+            }
+            """),
+            "invalid SIMD intrinsic signature" if simd_enabled else "unresolved",
+        ),
+        (
             "simd_unknown",
             dedent("""\
             extern "C" void __extreme_simd_unknown(unsigned*, unsigned*, unsigned*);

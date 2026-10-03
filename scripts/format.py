@@ -23,7 +23,7 @@ def main():
         text=True,
     ).split("\0")
     files = sorted({path for path in paths if path and (ROOT / path).is_file()})
-    cpp = [path for path in files if Path(path).suffix in {".cpp", ".h"}]
+    cpp = [path for path in files if Path(path).suffix in {".c", ".cpp", ".h"}]
     python = [path for path in files if path.endswith((".py", ".py.in"))]
     cmake = [path for path in files if Path(path).name == "CMakeLists.txt"]
 

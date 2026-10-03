@@ -16,6 +16,7 @@ p.add_argument("--bits", type=int, default=128)
 p.add_argument("--depth", type=int, default=16)
 p.add_argument("--cores", type=int, default=2)
 p.add_argument("--banks", type=int, default=2)
+p.add_argument("--words", type=int, default=4096)
 p.add_argument(
     "--test",
     choices=[
@@ -30,6 +31,7 @@ p.add_argument(
         "Memcpy2",
         "Compiled",
         "SIMD",
+        "Peripherals",
     ],
     default="all",
 )
@@ -44,6 +46,8 @@ p.add_argument("--cpphdl", type=Path)
 a = p.parse_args()
 cpphdl = a.cpphdl or Path(os.environ.get("CPPHDL_HOME", str(Path.home() / "cpphdl")))
 build = (a.build_dir or ROOT / "build") / f"b{a.bits}-d{a.depth}-c{a.cores}-m{a.banks}"
+if a.words != 4096:
+    build = build.with_name(build.name + f"-w{a.words}")
 if a.simd:
     build = build.with_name(build.name + "-simd")
 build.mkdir(parents=True, exist_ok=True)
@@ -72,6 +76,7 @@ flags = [
     f"-DEC_DEPTH={a.depth}",
     f"-DEC_CORES={a.cores}",
     f"-DEC_BANKS={a.banks}",
+    f"-DEC_BANK_WORDS={a.words}",
 ]
 feature_flags = ["-DEC_SIMD"] if a.simd else []
 flags += feature_flags
@@ -88,7 +93,17 @@ if a.flow in ["cpp", "all"]:
     )
     run([build / "instructions"])
 for name in (
-    ["LoadFifo", "StoreFifo", "Memory", "MemoryMux", "TasksControl", "System", "Tasks", "SIMD"]
+    [
+        "LoadFifo",
+        "StoreFifo",
+        "Memory",
+        "MemoryMux",
+        "TasksControl",
+        "System",
+        "Tasks",
+        "SIMD",
+        "Peripherals",
+    ]
     if a.test == "all"
     else [a.test]
 ):
@@ -98,6 +113,7 @@ for name in (
         "Compiled": "tests/compiled.cpp",
         "System": "tests/memcpy.cpp",
         "SIMD": "tests/simd.cpp",
+        "Peripherals": "devices/tests/peripherals.cpp",
     }
     src = ROOT / sources.get(name, f"rtl/tests/{name}.cpp")
     top = "System" if name in ["Compiled", "Tasks", "Memcpy2", "SIMD"] else name

@@ -14,9 +14,24 @@ p.add_argument("--regs", type=int, default=8)
 p.add_argument("--banks", type=int, default=2)
 p.add_argument("--bank-words", type=int, default=4096)
 p.add_argument("--entry", default="kernel")
+p.add_argument(
+    "--frontend",
+    choices=["riscv32", "armv7"],
+    default="riscv32",
+    help="Clang ILP32 frontend ABI; armv7 uses 64-bit long double",
+)
+p.add_argument("--lto", action="store_true", help="optimize the linked freestanding program")
+p.add_argument("--reentrant", action="store_true", help="reserve private storage per active call")
 p.add_argument("-I", dest="includes", action="append", default=[])
 p.add_argument("-D", dest="defines", action="append", default=[])
 p.add_argument("--emit-ir", type=Path)
+p.add_argument("--sysroot", type=Path, help="target C headers (no libraries are linked)")
+p.add_argument(
+    "--libcxx-include",
+    type=Path,
+    default=Path("@EXTREME_LLVM_ROOT@/include/c++/v1"),
+    help="freestanding libc++ headers (no library binaries are linked)",
+)
 a = p.parse_args()
 root = Path("@CMAKE_SOURCE_DIR@")
 codegen = Path("@CMAKE_CURRENT_BINARY_DIR@") / "extreme-codegen"
@@ -24,37 +39,52 @@ a.output.parent.mkdir(parents=True, exist_ok=True)
 try:
     with tempfile.TemporaryDirectory(prefix="extreme-cxx-") as temp:
         irs = []
-        for index, source in enumerate(a.sources):
+        for index, source in enumerate([*a.sources, root / "compiler/runtime/integer64.c"]):
             ir = Path(temp) / f"input{index}.ll"
             if source.suffix in [".ll", ".bc"]:
                 irs.append(source.resolve())
                 continue
+            c_source = source.suffix == ".c"
+            language_flags = (
+                ["-x", "c", "-std=gnu11"]
+                if c_source
+                else [
+                    "-std=c++20",
+                    "-fno-exceptions",
+                    "-fno-rtti",
+                    "-fno-threadsafe-statics",
+                    "-nostdinc++",
+                    "-isystem",
+                    str(a.libcxx_include),
+                    "-include",
+                    str(root / "compiler/include/extreme/libcxx_config.h"),
+                ]
+            )
             cmd = [
                 "@EXTREME_CLANG@",
-                "--target=riscv32-unknown-none-elf",
-                "-march=rv32im",
-                "-mabi=ilp32",
-                "-std=c++20",
+                *(
+                    ["--target=riscv32-unknown-none-elf", "-march=rv32im", "-mabi=ilp32"]
+                    if a.frontend == "riscv32"
+                    else ["--target=armv7-none-eabi", "-mfloat-abi=soft"]
+                ),
+                *language_flags,
                 "-O2",
                 "-ffreestanding",
-                "-fno-exceptions",
-                "-fno-rtti",
-                "-fno-threadsafe-statics",
                 "-fno-vectorize",
                 "-fno-slp-vectorize",
                 "-fno-unroll-loops",
                 "-fno-discard-value-names",
-                "-nostdinc++",
-                "-isystem",
-                "@EXTREME_LLVM_ROOT@/include/c++/v1",
+                *(
+                    ["--sysroot=" + str(a.sysroot), "-isystem", str(a.sysroot / "usr/include")]
+                    if a.sysroot
+                    else []
+                ),
                 "-idirafter",
                 str(root / "compiler/include/c"),
                 "-I",
                 str(root / "compiler/include"),
                 "-I",
                 str(root / "compiler"),
-                "-include",
-                str(root / "compiler/include/extreme/libcxx_config.h"),
                 *(["-DEC_SIMD"] if "@EC_SIMD_ENABLED@" == "ON" else []),
                 f"-DEC_BUS_BYTES={a.bits//8}",
                 f"-DEC_BANK_WORDS={a.bank_words}",
@@ -73,6 +103,80 @@ try:
         subprocess.run(
             ["@EXTREME_LLVM_LINK@", *[str(x) for x in irs], "-o", str(linked)], check=True
         )
+        helper_names = [
+            "__extreme_i64_" + operation
+            for operation in (
+                "add",
+                "sub",
+                "mul",
+                "and",
+                "or",
+                "xor",
+                "shl",
+                "lshr",
+                "ashr",
+                "udiv",
+                "urem",
+                "sdiv",
+                "srem",
+                "bswap",
+            )
+        ]
+        helper_names += [
+            "__" + operation + suffix
+            for suffix in ("sf3", "df3")
+            for operation in ("add", "sub", "mul", "div")
+        ]
+        helper_names += [
+            "__lesf2",
+            "__unordsf2",
+            "__ledf2",
+            "__unorddf2",
+            "ceilf",
+            "ceil",
+            "__fixunssfsi",
+            "__fixsfsi",
+            "__floatunsisf",
+            "__floatsisf",
+            "__fixunsdfsi",
+            "__fixdfsi",
+            "__floatunsidf",
+            "__floatsidf",
+            "__extendsfdf2",
+            "__truncdfsf2",
+            "__fixdfdi",
+            "__fixunsdfdi",
+            "__floatdidf",
+            "__floatundidf",
+            "__floatdisf",
+            "__floatundisf",
+            "__fixsfdi",
+            "__fixunssfdi",
+            "floor",
+            "floorf",
+            "trunc",
+            "truncf",
+            "round",
+            "roundf",
+        ]
+        helper_names += [
+            "__extreme_sigsetjmp_prepare",
+            "__extreme_siglongjmp_prepare",
+            "__extreme_longjmp_prepare",
+        ]
+        live = Path(temp) / "live.bc"
+        subprocess.run(
+            [
+                "@EXTREME_OPT@",
+                "-passes=internalize,globaldce" + (",default<O2>,globaldce" if a.lto else ""),
+                "--internalize-public-api-list=" + ",".join([a.entry, *helper_names]),
+                str(linked),
+                "-o",
+                str(live),
+            ],
+            check=True,
+        )
+        linked = live
         if a.emit_ir:
             subprocess.run(["@EXTREME_OPT@", "-S", str(linked), "-o", str(a.emit_ir)], check=True)
         subprocess.run(
@@ -85,6 +189,7 @@ try:
                 str(a.banks),
                 str(a.bank_words),
                 a.entry,
+                *(["--reentrant"] if a.reentrant else []),
             ],
             check=True,
         )

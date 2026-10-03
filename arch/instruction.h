@@ -81,6 +81,11 @@ enum class Opcode : uint8_t {
     CallRegister = 0x44,
     // STACKLIMIT imm32 (5 bytes): with SP zero, set return capacity to 1..N*(BUS_WIDTH/32).
     StackLimit = 0x45,
+    // GETSP d (2 bytes): zero-extend the occupied return-lane count into r[d].
+    ReadStackPointer = 0x46,
+    // SETSP a (2 bytes): set SP from low32(r[a]); values beyond STACKLIMIT fault.
+    // Does not change return-lane contents or memory. Software restores them explicitly.
+    WriteStackPointer = 0x47,
     // Task operands use low 32 bits; result/status/state writes clear higher register bits.
     // TISSUE d,a,b (4 bytes): drain, issue ID r[d]/entry r[a]/mask r[b]; status to r[d].
     TaskIssue = 0x50,
@@ -99,7 +104,8 @@ enum class Opcode : uint8_t {
 // Disabled builds exclude these opcode names and fault if their encodings are executed.
 #ifdef EC_SIMD
     // SIMD32 replaces the entire destination with BUS_WIDTH/32 independent 32-bit lanes.
-    // Lane i occupies bits [32*i+31:32*i]; no carry crosses lanes. Sources may alias d.
+    // Lane i occupies bits [32*i+31:32*i]. Carry masks and pair moves are explicit.
+    // Sources may alias d; ordinary lane arithmetic never crosses a lane boundary.
     // VADD32 d,a,b (4 bytes): independent lane additions modulo 2^32.
     SimdAdd32 = 0x80,
     // VSUB32 d,a,b (4 bytes): independent lane subtractions a - b modulo 2^32.
@@ -124,6 +130,15 @@ enum class Opcode : uint8_t {
     SimdLessSigned32 = 0x8a,
     // VSPLAT32 d,a (3 bytes): replicate low32(r[a]) into every destination lane.
     SimdSplat32 = 0x8b,
+    // VADDC32 d,a,b (4 bytes): each lane is the unsigned carry-out of a + b (0 or 1).
+    // Does not write the sum or any hidden flags. Use VPAIRUP32 to move low-word carries.
+    SimdAddCarry32 = 0x8c,
+    // VPAIRSWAP32 d,a (3 bytes): swap the two 32-bit lanes within every adjacent pair.
+    SimdPairSwap32 = 0x8d,
+    // VPAIRUP32 d,a (3 bytes): each [low,high] pair becomes [0,low], a fixed 32-bit move.
+    SimdPairUp32 = 0x8e,
+    // VPAIRDOWN32 d,a (3 bytes): each [low,high] pair becomes [high,0].
+    SimdPairDown32 = 0x8f,
 #endif
 };
 
@@ -153,17 +168,17 @@ constexpr unsigned length(uint8_t op) {
     if (op == 0x32 || op == 0x33) {
         return 4;
     }
-    if (op == 0x43 || op == 0x44) {
+    if (op == 0x43 || op == 0x44 || op == 0x46 || op == 0x47) {
         return 2;
     }
     if (op == 0x40 || op == 0x42 || op == 0x45) {
         return 5;
     }
 #ifdef EC_SIMD
-    if (op >= 0x80 && op <= 0x8a) {
+    if ((op >= 0x80 && op <= 0x8a) || op == 0x8c) {
         return 4;
     }
-    if (op == 0x8b) {
+    if (op == 0x8b || (op >= 0x8d && op <= 0x8f)) {
         return 3;
     }
 #endif

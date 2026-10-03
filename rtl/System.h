@@ -3,6 +3,9 @@
 #include "MemoryMux.h"
 #include "Memory.h"
 #include "TasksControl.h"
+#ifdef EC_DEVICES
+#include "../devices/Peripherals.h"
+#endif
 
 class System : public Module {
 public:
@@ -15,7 +18,26 @@ public:
     _PORT(u<32>) task_debug_id_in;
     _PORT(u<32>) task_debug_state_out = _ASSIGN(tasks.debug_state_out());
     _PORT(u<32>) task_debug_result_out = _ASSIGN(tasks.debug_result_out());
-    Memory memories[EC_BANKS];
+    Memory memories[EC_RAM_BANKS];
+#ifdef EC_DEVICES
+    Peripherals peripherals;
+    _PORT(bool)
+    uart_ready_in, uart_rx_valid_in, ethernet_rx_valid_in, ethernet_rx_last_in,
+        ethernet_tx_ready_in;
+    _PORT(u<8>) uart_rx_data_in;
+    _PORT(u<32>) ethernet_rx_count_in;
+    _PORT(logic<EC_BITS>) ethernet_rx_data_in;
+    _PORT(bool) uart_valid_out = _ASSIGN(peripherals.uart_valid_out());
+    _PORT(u<8>) uart_data_out = _ASSIGN(peripherals.uart_data_out());
+    _PORT(bool) uart_rx_ready_out = _ASSIGN(peripherals.uart_rx_ready_out());
+    _PORT(bool) ethernet_rx_ready_out = _ASSIGN(peripherals.rx_ready_out());
+    _PORT(bool) ethernet_tx_valid_out = _ASSIGN(peripherals.tx_valid_out());
+    _PORT(bool) ethernet_tx_last_out = _ASSIGN(peripherals.tx_last_out());
+    _PORT(u<32>) ethernet_tx_count_out = _ASSIGN(peripherals.tx_count_out());
+    _PORT(logic<EC_BITS>) ethernet_tx_data_out = _ASSIGN(peripherals.tx_data_out());
+    _PORT(bool) device_exit_valid_out = _ASSIGN(peripherals.exit_valid_out());
+    _PORT(u<32>) device_exit_code_out = _ASSIGN(peripherals.exit_code_out());
+#endif
     _PORT(bool) run_in, host_mode_in, host_request_in, host_write_in;
     _PORT(u<32>) host_address_in;
     _PORT(logic<EC_BITS>) host_data_in;
@@ -23,6 +45,7 @@ public:
     _PORT(u<32>) entry_in[EC_CORES];
     _PORT(bool) halted_out[EC_CORES], fault_out[EC_CORES];
     _PORT(u<32>) debug_sp_out[EC_CORES];
+    _PORT(u<32>) debug_pc_out[EC_CORES];
     _PORT(u<32>) debug_register_index_in;
     _PORT(logic<EC_BITS>) debug_register_out[EC_CORES];
     _PORT(bool) host_ready_out = _ASSIGN_COMB(host_ready_comb_func());
@@ -36,7 +59,7 @@ private:
     bool& host_ready_comb_func() {
         unsigned i;
         host_ready_comb = false;
-        for (i = 0; i < EC_BANKS; ++i) {
+        for (i = 0; i < EC_RAM_BANKS; ++i) {
             if (host_address_in() / (EC_BANK_WORDS * (EC_BITS / 8)) == i) {
                 host_ready_comb = host_mode_in() && memories[i].ready_out();
             }
@@ -47,7 +70,7 @@ private:
     bool& host_response_comb_func() {
         unsigned i;
         host_response_comb = false;
-        for (i = 0; i < EC_BANKS; ++i) {
+        for (i = 0; i < EC_RAM_BANKS; ++i) {
             if (memories[i].response_out() && host_mode_in()) {
                 host_response_comb = true;
             }
@@ -58,7 +81,7 @@ private:
     logic<EC_BITS>& host_result_comb_func() {
         unsigned i;
         host_result_comb = 0;
-        for (i = 0; i < EC_BANKS; ++i) {
+        for (i = 0; i < EC_RAM_BANKS; ++i) {
             if (memories[i].response_out() && host_mode_in()) {
                 host_result_comb = memories[i].response_data_out();
             }
@@ -97,6 +120,7 @@ public:
             cores[i].entry_in = entry_in[i];
             cores[i].debug_register_index_in = debug_register_index_in;
             debug_sp_out[i] = cores[i].debug_sp_out;
+            debug_pc_out[i] = cores[i].debug_pc_out;
             halted_out[i] = cores[i].halted_out;
             fault_out[i] = cores[i].fault_out;
             debug_register_out[i] = cores[i].debug_register_out;
@@ -124,7 +148,31 @@ public:
             cores[i].store_response_error_in = mux.response_error_out[2 * i + 1];
             cores[i]._assign();
         }
-        for (i = 0; i < EC_BANKS; ++i) {
+#ifdef EC_DEVICES
+        peripherals.request_in = _ASSIGN(!host_mode_in() && mux.mem_request_out[EC_BANKS - 1]());
+        peripherals.write_in = mux.mem_write_out[EC_BANKS - 1];
+        peripherals.address_in = mux.mem_address_out[EC_BANKS - 1];
+        peripherals.tag_in = mux.mem_tag_out[EC_BANKS - 1];
+        peripherals.data_in = mux.mem_data_out[EC_BANKS - 1];
+        peripherals.mask_in = mux.mem_mask_out[EC_BANKS - 1];
+        peripherals.response_ready_in = mux.mem_response_ready_out[EC_BANKS - 1];
+        peripherals.enable_in = memory_enable_in[EC_BANKS - 1];
+        mux.mem_ready_in[EC_BANKS - 1] = _ASSIGN(!host_mode_in() && peripherals.ready_out());
+        mux.mem_response_in[EC_BANKS - 1] = peripherals.response_out;
+        mux.mem_response_tag_in[EC_BANKS - 1] = peripherals.response_tag_out;
+        mux.mem_response_data_in[EC_BANKS - 1] = peripherals.response_data_out;
+        mux.mem_error_in[EC_BANKS - 1] = peripherals.response_error_out;
+        peripherals.uart_ready_in = uart_ready_in;
+        peripherals.uart_rx_valid_in = uart_rx_valid_in;
+        peripherals.uart_rx_data_in = uart_rx_data_in;
+        peripherals.rx_valid_in = ethernet_rx_valid_in;
+        peripherals.rx_last_in = ethernet_rx_last_in;
+        peripherals.rx_count_in = ethernet_rx_count_in;
+        peripherals.rx_data_in = ethernet_rx_data_in;
+        peripherals.tx_ready_in = ethernet_tx_ready_in;
+        peripherals._assign();
+#endif
+        for (i = 0; i < EC_RAM_BANKS; ++i) {
             memories[i].request_in = _ASSIGN_I(
                 host_mode_in() ? (host_request_in() &&
                                   host_address_in() / (EC_BANK_WORDS * (EC_BITS / 8)) == i)
@@ -158,7 +206,10 @@ public:
         }
         mux._work(reset);
         tasks._work(reset);
-        for (i = 0; i < EC_BANKS; ++i) {
+#ifdef EC_DEVICES
+        peripherals._work(reset);
+#endif
+        for (i = 0; i < EC_RAM_BANKS; ++i) {
             memories[i]._work(reset);
         }
     }
@@ -170,7 +221,10 @@ public:
         }
         mux._strobe();
         tasks._strobe();
-        for (i = 0; i < EC_BANKS; ++i) {
+#ifdef EC_DEVICES
+        peripherals._strobe();
+#endif
+        for (i = 0; i < EC_RAM_BANKS; ++i) {
             memories[i]._strobe();
         }
     }

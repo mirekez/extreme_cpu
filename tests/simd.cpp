@@ -118,6 +118,8 @@ struct SimdTest : Harness {
             return uint64_t(x) * y;
         case 0x8a:
             return (x ^ 0x80000000u) < (y ^ 0x80000000u);
+        case 0x8c:
+            return (uint64_t(x) + y) >> 32;
         default:
             throw std::runtime_error("unexpected SIMD reference opcode");
         }
@@ -127,7 +129,7 @@ struct SimdTest : Harness {
         const uint32_t edges[] = {0xffffffff, 1, 0x80000000, 0x7fffffff, 0, 0x12345678, 32, 33};
         const uint32_t counts[] = {1, 31, 32, 33, 0xffffffff, 0, 0x80000000, 16};
         std::mt19937 random(0x512128);
-        for (unsigned op = 0x80; op <= 0x8b; ++op) {
+        for (unsigned op = 0x80; op <= 0x8f; ++op) {
             for (unsigned alias = 0; alias < 4; ++alias) {
                 for (unsigned round = 0; round < 6; ++round) {
                     reset();
@@ -143,15 +145,25 @@ struct SimdTest : Harness {
                             }
                             left.bits(lane * 32 + 31, lane * 32) = x;
                             right.bits(lane * 32 + 31, lane * 32) = y;
-                            if (op != 0x8b) {
+                            if (op != 0x8b && op < 0x8d) {
                                 expected[core].bits(lane * 32 + 31, lane * 32) =
                                     reference(op, x, y);
                             }
                         }
-                        if (op == 0x8b) {
-                            for (unsigned lane = 0; lane < EC_BITS / 32; ++lane) {
-                                expected[core].bits(lane * 32 + 31, lane * 32) = uint32_t(left);
+                        for (unsigned lane = 0; lane < EC_BITS / 32; ++lane) {
+                            uint32_t moved;
+                            if (op == 0x8b) {
+                                moved = uint32_t(left);
+                            } else if (op >= 0x8d) {
+                                uint64_t pair = uint64_t(left >> ((lane / 2) * 64));
+                                uint64_t result = op == 0x8d   ? (pair << 32) | (pair >> 32)
+                                                  : op == 0x8e ? pair << 32
+                                                               : pair >> 32;
+                                moved = uint32_t(result >> ((lane % 2) * 32));
+                            } else {
+                                continue;
                             }
+                            expected[core].bits(lane * 32 + 31, lane * 32) = moved;
                         }
                         unsigned destination = alias == 1 || alias == 3 ? 2 : alias == 2 ? 3 : 4;
                         Word finalLeft = destination == 2 ? expected[core] : left;
@@ -200,10 +212,10 @@ int main() {
     SimdTest test;
 #ifdef EC_SIMD
     test.arithmetic();
-    for (unsigned op = 0x80; op <= 0x8b; ++op) {
+    for (unsigned op = 0x80; op <= 0x8f; ++op) {
         test.fault({uint8_t(op), EC_REGS, 0, 0});
         test.fault({uint8_t(op), 0, EC_REGS, 0});
-        if (op != 0x8b) {
+        if (op != 0x8b && op < 0x8d) {
             test.fault({uint8_t(op), 0, 0, EC_REGS});
         }
     }
@@ -211,12 +223,12 @@ int main() {
     truncated.back() = 0x80;
     test.fault(truncated);
 #else
-    for (unsigned op = 0x80; op <= 0x8b; ++op) {
+    for (unsigned op = 0x80; op <= 0x8f; ++op) {
         require(length(op) == 0, "SIMD encoding enabled in disabled build");
         test.fault({uint8_t(op), 0, 0, 0});
     }
 #endif
-    test.fault({0x8c, 0, 0, 0});
+    test.fault({0x90, 0, 0, 0});
     test.reset();
     for (unsigned core = 0; core < EC_CORES; ++core) {
         Assembler p(EC_BITS);
