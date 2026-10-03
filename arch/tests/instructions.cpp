@@ -60,6 +60,25 @@ int main() {
         check(task.code[offset] == 0x52 && task.code[offset + 3] == 4);
         check(length(0x51) == 3 && length(0x53) == 2 && length(0x54) == 2 && length(0x55) == 3 &&
               length(0x56) == 2);
+#ifdef EC_SIMD
+        for (unsigned op = 0x80; op <= 0x8b; ++op) {
+            Assembler simd(bits);
+            // Exercise padding when the instruction cannot fit at the end of a word.
+            simd.code.resize(bits / 8 - 1, 0);
+            simd.emit(Opcode(op), 2, 3, 4);
+            unsigned start = bits / 8;
+            check(simd.code[start] == op && simd.code[start + 1] == 2 && simd.code[start + 2] == 3);
+            check(length(op) == (op == 0x8b ? 3 : 4));
+            if (op != 0x8b) {
+                check(simd.code[start + 3] == 4);
+            }
+        }
+#else
+        for (unsigned op = 0x80; op <= 0x8b; ++op) {
+            check(length(op) == 0);
+        }
+#endif
+        check(length(0x8c) == 0);
         Assembler branch(bits);
         branch.emit(Opcode::Jump, 0, 0, 0, 0x12345678);
         check(branch.code[1] == 0x78 && branch.code[4] == 0x12);

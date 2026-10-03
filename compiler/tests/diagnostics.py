@@ -134,6 +134,50 @@ cases = [
     ),
 ]
 
+simd_enabled = len(sys.argv) > 2 and sys.argv[2] == "ON"
+cases.extend(
+    [
+        (
+            "simd_signature",
+            dedent("""\
+            extern "C" void __extreme_simd_add32(unsigned*, unsigned*);
+            unsigned data[16];
+
+            extern "C" unsigned kernel() {
+                __extreme_simd_add32(data, data);
+                return 0;
+            }
+            """),
+            "invalid SIMD intrinsic signature" if simd_enabled else "unresolved",
+        ),
+        (
+            "simd_result",
+            dedent("""\
+            extern "C" unsigned __extreme_simd_splat32(unsigned*, unsigned);
+            unsigned data[16];
+
+            extern "C" unsigned kernel() {
+                return __extreme_simd_splat32(data, 42);
+            }
+            """),
+            "invalid SIMD intrinsic signature" if simd_enabled else "unresolved",
+        ),
+        (
+            "simd_unknown",
+            dedent("""\
+            extern "C" void __extreme_simd_unknown(unsigned*, unsigned*, unsigned*);
+            unsigned data[16];
+
+            extern "C" unsigned kernel() {
+                __extreme_simd_unknown(data, data, data);
+                return 0;
+            }
+            """),
+            "unknown SIMD intrinsic" if simd_enabled else "unresolved",
+        ),
+    ]
+)
+
 with tempfile.TemporaryDirectory(prefix="extreme-negative-") as temp:
     for name, source, diagnostic in cases:
         src = Path(temp) / (name + ".cpp")

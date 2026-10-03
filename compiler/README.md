@@ -102,3 +102,11 @@ instruction addresses. The compiler discovers their call graphs and isolates
 local storage per task ID, including shared helper functions. See
 [tasks/README.md](tasks/README.md) for usage, restrictions, and the dual-memcpy
 bandwidth regression.
+
+## Optional SIMD32 intrinsics
+
+Build with `-DEC_SIMD=ON` to compile for SIMD-capable cores. The generated
+`extreme-cxx` driver defines `EC_SIMD` for kernels, and the backend recognizes
+[SIMD intrinsics](simd/README.md). Disabled builds exclude this API and reject
+its external intrinsic symbols. The extension does not enable automatic LLVM
+vectorization or arbitrary LLVM vector types.

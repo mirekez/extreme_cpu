@@ -55,6 +55,7 @@ try:
                 str(root / "compiler"),
                 "-include",
                 str(root / "compiler/include/extreme/libcxx_config.h"),
+                *(["-DEC_SIMD"] if "@EC_SIMD_ENABLED@" == "ON" else []),
                 f"-DEC_BUS_BYTES={a.bits//8}",
                 f"-DEC_BANK_WORDS={a.bank_words}",
                 f"-DEC_BANKS={a.banks}",

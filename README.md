@@ -34,8 +34,8 @@ the interfaces for integrating different memory controllers.
 
 The prototype runs assembled programs and freestanding C++ kernels compiled
 with the Conda LLVM 21 frontend and custom IR backend. A production compiler, OS,
-physical memory controller, and SIMD ISA are future work. Tests report modeled
-copy bandwidth; physical timing, area, and power are not yet characterized.
+and physical memory controller are future work. Optional SIMD32 is implemented.
+Tests report modeled copy bandwidth; physical timing, area, and power are not yet characterized.
 
 Run `make synth` for a complete-system synthesis smoke check using Yosys with
 the slang frontend. The default synthesis configuration uses a 64-bit bus, one
@@ -141,3 +141,27 @@ covers tracked and new handwritten C++ headers/sources, Python scripts and the
 compiler-driver template, and CMake files; it honors `.gitignore` and excludes
 generated build output. The check command reports formatting changes without
 modifying files.
+
+## Optional SIMD32
+
+Enable the integer SIMD extension on every core with:
+
+```sh
+cmake -S . -B build/simd -DEC_SIMD=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build/simd -j2
+ctest --test-dir build/simd --output-on-failure
+cmake --build build/simd --target synth
+```
+
+`EC_SIMD` defaults to OFF. It controls the RTL, assembler, compiler intrinsics,
+and C++/Verilator tests together. Enabled cores implement full-width add,
+subtract, multiply, bitwise operations, shifts, comparisons, and broadcast using
+32-bit lanes. See [the ISA](doc/instructions.md#optional-simd32-extension) and
+[C++ intrinsics](compiler/simd/README.md).
+
+For standalone regressions use `python3 scripts/test.py --simd --test SIMD`;
+add `--bits 64`, `128`, `256`, or `512`. Run `make matrix-simd` to exercise
+SIMD at every supported width in both flows. `scripts/synth.py --simd` includes
+the extension in synthesis. Standalone SIMD build directories end in `-simd`,
+so they do not overwrite disabled builds. Without the flag, the SIMD regression
+checks that reserved opcodes fault and reset recovers normal execution.

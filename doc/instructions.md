@@ -1,14 +1,48 @@
-# Instruction set, revision 0
+# Instruction set
 
 Instructions occupy 1–6 bytes and never cross a BUS_WIDTH word boundary. Pad
 with `NOP` as needed. All immediate and word-target fields are little-endian.
-`arch/instruction.h` contains opcode values, operand descriptions, instruction
-lengths, and the assembler helper; host structure packing is not the encoding.
+[`arch/instruction.h`](../arch/instruction.h) contains opcode values, operand
+descriptions, instruction lengths, and the assembler helper; host structure packing is not the encoding.
 
 Registers `r0..r(N-1)` are BUS_WIDTH bits. All are writable. Scalar arithmetic
 reads bits 31:0, computes modulo 2^32, and zero-extends its result. `MOV`, `LD`,
 and `ST` transfer whole registers. Addresses use bits 31:0 of their register.
 Shift counts use five low bits. There are no implicit flags or split immediates.
+
+## Encoding conventions
+
+`word_bytes = BUS_WIDTH/8` and `N = EC_REGS`. Operands `d`, `a`, and `b` are
+one-byte register indices in `0..N-1`; they do not encode subregisters. In the
+operation descriptions, scalar register operands mean their low 32-bit values.
+All bytes of an immediate are present in the instruction; no separate upper/lower
+immediate instructions are needed.
+
+| Bytes | Encoding | Instructions |
+|---:|---|---|
+| 1 | op | NOP, HALT, BARRIER, COPY, LOOP, END, NEXTSRC, NEXTDST, RET |
+| 2 | op,register | JMPR, CALLR, TFINISH, TABORT, TID |
+| 3 | op,d,a | MOV, LD, ST, TDISARM, TSTATE, VSPLAT32 |
+| 4 | op,d,a,b | Scalar and SIMD binary ALU operations, TISSUE, TREAD |
+| 4 | op,d,a,flags | LDS, STS; the last byte is a memory flag, not a register |
+| 5 | op,imm32 | JMP, CALL, STACKLIMIT |
+| 6 | op,d,imm32 | LI, BZ |
+
+Instruction words contain consecutive instruction bytes, with the first byte
+in bits 7:0 of the fetched word. Insert NOP bytes before an instruction that
+would cross a word boundary. JMP, BZ, and CALL immediates are absolute word
+indices; JMPR, CALLR, and task entry registers contain byte addresses aligned
+to `word_bytes`. LI and STACKLIMIT immediates are integer values.
+
+`Assembler::emit(op, d, a, b, imm)` pads before an instruction when needed.
+Supply a direct branch/call target or STACKLIMIT value in `imm`; supply a
+JMPR/CALLR operand in `d`, despite its mnemonic spelling `a`. For LDS/STS,
+supply the `MemoryFlag` value in `b`. The helper validates the opcode and bus
+width; it does not validate register indices, memory flags, or runtime addresses.
+Use `align()` before branch targets and after CALL/CALLR, whose return addresses
+skip to the next word boundary.
+
+## Base instructions
 
 | Opcode | Mnemonic | Bytes / fields | Operation |
 |---|---|---|---|
@@ -33,7 +67,10 @@ Shift counts use five low bits. There are no implicit flags or split immediates.
 | 27 | SLTU d,a,b | 4: op,d,a,b | 1 if unsigned a < b, otherwise 0 |
 | 28 | SAR d,a,b | 4: op,d,a,b | Arithmetic right shift of signed low 32 bits |
 | 29 | MUL d,a,b | 4: op,d,a,b | Low 32 bits of product |
-| 2A–2D | DIVU, DIVS, REMU, REMS | 4: op,d,a,b | Unsigned/signed quotient or remainder |
+| 2A | DIVU d,a,b | 4: op,d,a,b | Unsigned quotient a / b |
+| 2B | DIVS d,a,b | 4: op,d,a,b | Signed quotient a / b, truncated toward zero |
+| 2C | REMU d,a,b | 4: op,d,a,b | Unsigned remainder a % b |
+| 2D | REMS d,a,b | 4: op,d,a,b | Signed remainder; nonzero remainder has dividend's sign |
 | 2E | SLT d,a,b | 4: op,d,a,b | Signed comparison |
 | 30 | LD d,a | 3: op,d,a | Load one aligned word from address r[a] |
 | 31 | ST d,a | 3: op,d,a | Enqueue full-width r[d] at address r[a] |
@@ -74,8 +111,9 @@ HALT
 ```
 
 COPY is executed by the core's three stages, not by an external DMA controller.
-The count uses bits 31:0 of r2. For a nonzero count, on completion of enqueueing, r0/r1 advance by the original count * word_bytes
-and r2 becomes zero. It leaves other architectural registers unchanged. A zero
+The count uses bits 31:0 of r2. For a nonzero count, on completion of enqueueing,
+r0/r1 advance by the original count * word_bytes, zero-extending the resulting
+32-bit addresses, and r2 becomes zero. It leaves other architectural registers unchanged. A zero
 count produces no data transactions and leaves all registers unchanged. Source
 and destination must be aligned and the ranges must not overlap.
 
@@ -99,16 +137,40 @@ and can return across instruction words. General branches use word targets;
 align their destinations with NOP padding. Frequent loop-control and iteration
 instructions remain exactly one byte independent of BUS_WIDTH.
 
-## Scalar access flags and calls
+## Scalar memory access and ordering
 
-LDS flags follow RISC-V funct3: 0 = signed byte, 1 = signed halfword,
-2 = word, 4 = unsigned byte, 5 = unsigned halfword. STS accepts 0, 1, 2.
+LDS/STS flags follow RISC-V funct3:
+
+| Flag | `MemoryFlag` | LDS | STS |
+|---:|---|---|---|
+| 0 | Byte | Sign-extend one byte to 32 bits | Store low byte |
+| 1 | Half | Sign-extend two bytes to 32 bits | Store low two bytes |
+| 2 | Word | Load four bytes | Store low four bytes |
+| 4 | ByteUnsigned | Zero-extend one byte | Invalid |
+| 5 | HalfUnsigned | Zero-extend two bytes | Invalid |
+
 Other flags fault. Halfwords/words require natural alignment. Loads extend to
 32 bits, then zero all higher register bits; signed byte/halfword loads sign
 extend only within those low 32 bits. Stores preserve unselected memory bytes
 using controller byte enables. Every bus transaction remains BUS_WIDTH wide.
-Divide by zero returns all ones for quotient and the dividend for remainder;
-signed INT_MIN / -1 returns INT_MIN with remainder zero.
+
+ST and STS retire after enqueueing their write; COPY also returns before its
+store queue necessarily drains. A following load can therefore observe old
+memory. There is no address hazard detection, store-to-load forwarding, or cache.
+Use BARRIER before a dependent read. BARRIER drains the issuing core's memory
+operations and invalidates its two instruction buffers; it does not wait for
+other cores or provide mutual exclusion. HALT also drains local operations.
+
+## Scalar arithmetic and register returns
+
+All scalar ALU instructions replace r[d] with a zero-extended 32-bit result,
+even for signed operations. ADD, SUB, and MUL wrap modulo 2^32. Signed quotient
+rounds toward zero; a nonzero signed remainder has the dividend's sign. Divide
+by zero returns 0xffffffff for the quotient and the dividend for the remainder.
+Signed INT_MIN / -1 returns INT_MIN with remainder zero. Comparisons return
+integer 0 or 1, and all shifts mask the right operand with 31. Scalar ALU
+sources are read before the destination is written, so source/destination
+aliasing is allowed.
 
 SP is an occupied-slot count, reset to zero. Slot i is lane i % (BUS_WIDTH/32)
 of register i / (BUS_WIDTH/32), starting at the least significant lane. CALL
@@ -122,16 +184,75 @@ There are no push/pop instructions, automatic register saves, or data stack.
 Software must preserve occupied return lanes and any caller values it needs.
 See [compiler ABI](../compiler/README.md) for the implemented convention.
 
-## Generic programming and future SIMD
+## Optional SIMD32 extension
 
-The freestanding compiler supports an initial C++ subset using this ISA.
-Existing machine-code binaries are not compatible.
+Configure with `cmake -S . -B build/simd -DEC_SIMD=ON`. It defines `EC_SIMD`
+for every core, the assembler, compiler, and both simulation flows. The default
+is OFF: the SIMD decode, arithmetic, opcode names, and compiler intrinsics are
+excluded by `#ifdef EC_SIMD`. These opcodes fault in a disabled core. Scalar
+programs have the same encoding and behavior in either configuration.
 
-Opcodes 80–BF are reserved for future explicit SIMD operations over full-width
-registers. No SIMD opcode is currently executable; it faults like other unknown
-encodings. Lane size, saturation, masking, and reduction semantics remain to be
-specified. Full-width register storage and copy-stage payloads are already in
-place for that extension.
+Each register contains BUS_WIDTH/32 independent lanes: lane i occupies bits
+32*i+31:32*i, with lane zero in the least significant bits. Every SIMD
+instruction computes all lanes in the execute stage and replaces the entire
+destination register. Sources are read before the destination is changed;
+`d == a`, `d == b`, and `d == a == b` are legal. No masks, saturation, lane
+crossing, flags, or implicit memory accesses are introduced.
+
+| Opcode (hex) | Mnemonic | Bytes / fields | Per-lane operation |
+|---|---|---|---|
+| 80 | VADD32 d,a,b | 4: op,d,a,b | a + b modulo 2^32 |
+| 81 | VSUB32 d,a,b | 4: op,d,a,b | a - b modulo 2^32 |
+| 82 | VAND32 d,a,b | 4: op,d,a,b | a AND b |
+| 83 | VOR32 d,a,b | 4: op,d,a,b | a OR b |
+| 84 | VXOR32 d,a,b | 4: op,d,a,b | a XOR b |
+| 85 | VSHL32 d,a,b | 4: op,d,a,b | Logical left shift by b & 31 |
+| 86 | VSHR32 d,a,b | 4: op,d,a,b | Logical right shift by b & 31 |
+| 87 | VSLTU32 d,a,b | 4: op,d,a,b | Unsigned a < b, producing 0 or 1 |
+| 88 | VSAR32 d,a,b | 4: op,d,a,b | Arithmetic right shift by b & 31 |
+| 89 | VMUL32 d,a,b | 4: op,d,a,b | Low 32 bits of a * b |
+| 8A | VSLT32 d,a,b | 4: op,d,a,b | Signed a < b, producing 0 or 1 |
+| 8B | VSPLAT32 d,a | 3: op,d,a | Copy a[31:0] into every destination lane |
+
+Comparisons produce integer 1, not an all-ones mask. Add/subtract/multiply
+never carry into neighboring lanes. Shifts use each corresponding right-hand
+lane, not a single scalar shift count. Signed values use two's complement.
+Use full-width LD/ST for data and BARRIER when a read depends on queued stores.
+Scalar arithmetic still clears all destination bits above bit 31, including
+a destination previously written by SIMD. SIMD writes also overwrite return
+address lanes if software selects a register occupied by the return stack.
+
+C++ intrinsics are in [compiler/simd/simd.h](../compiler/simd/simd.h); see
+[their contract](../compiler/simd/README.md). LLVM automatic vectorization is
+still disabled. Opcodes 8C–BF remain reserved; floating point, other lane widths,
+SIMD division, reductions, and saturation are not implemented.
+
+For a nonzero word count, this adds the same 32-bit bias to every input lane:
+
+```text
+LI r0, source_byte_address
+LI r1, destination_byte_address
+LI r2, word_count
+LI r5, bias
+VSPLAT32 r5, r5
+LOOP
+    LD r3, r0
+    VADD32 r4, r3, r5
+    ST r4, r1
+    NEXTSRC
+    NEXTDST
+END
+BARRIER
+HALT
+```
+
+Both buffers must be word-aligned and nonoverlapping. A zero count must branch
+around the loop. This uses ordinary serial instruction execution: each SIMD
+ALU instruction computes all lanes together, but the complete load/compute/store
+loop does not have COPY's one-word-per-clock streaming behavior. SIMD does not
+add a pipeline stage, forwarding, or implicit memory synchronization. The C++
+intrinsics add barriers around their full-word memory accesses; the SIMD
+instructions themselves operate only on registers.
 
 ## Task instructions
 
@@ -139,4 +260,23 @@ See [the task engine](tasks_engine.md) for exact state/status values, publicatio
 barriers, cancellation, slot reuse, and operand aliasing rules. Task entries are
 aligned byte addresses. TFINISH/TABORT terminate a dispatched task independently
 of its local CALL/RET stack. Boot code uses HALT; TID outside a task returns
-0xffffffff. TISSUE and completion drain prior memory operations before publishing.
+0xffffffff. Task operands use their low 32 bits; results, statuses, and states
+written to registers are zero-extended to BUS_WIDTH.
+
+TISSUE returns command status in its former task-ID register after reading all
+three operands. TDISARM also returns status. TREAD is nonblocking: it returns
+result in r[d] and status in r[b], requiring `d != b`; the task-ID register may
+alias either output. On INVALID or NOT_READY, its result output is zero. Use
+TSTATE to distinguish COMPLETE, FAILED, and CANCELLED results. An invalid ID
+passed to TSTATE returns 0xffffffff.
+
+Command statuses are OK=0, INVALID=1, LOCKED=2, NOT_READY=3, NOT_OWNER=4. Slot
+states are EMPTY=0, WAITING=1, RESERVED=2, RUNNING=3, COMPLETE=4, FAILED=5,
+CANCELLED=6. Task IDs are 0..31; predecessor mask bit i names task slot i.
+
+TISSUE, TFINISH, and TABORT drain prior local memory operations and invalidate
+instruction buffers before publishing. TFINISH is normal completion even when
+its result represents an application error. TABORT explicitly prevents dependent
+continuations by propagating cancellation. TFINISH/TABORT have no continuation;
+a failed ownership check faults the core. HALT inside an owned task is an
+abnormal task exit. RET returns from an ordinary function, not from a task.

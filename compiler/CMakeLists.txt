@@ -13,7 +13,7 @@ find_program(
 find_program(EXTREME_OPT NAMES opt HINTS "${EXTREME_LLVM_ROOT}/bin" REQUIRED NO_DEFAULT_PATH)
 add_executable(extreme-codegen codegen.cpp)
 target_include_directories(extreme-codegen SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
-target_link_libraries(extreme-codegen PRIVATE LLVM)
+target_link_libraries(extreme-codegen PRIVATE LLVM extreme_features)
 configure_file(extreme-cxx.py.in ${CMAKE_BINARY_DIR}/bin/extreme-cxx @ONLY)
 file(CHMOD ${CMAKE_BINARY_DIR}/bin/extreme-cxx PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
      GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
@@ -22,9 +22,13 @@ add_executable(Compiled_cpp ${CMAKE_SOURCE_DIR}/tests/compiled.cpp)
 target_link_libraries(Compiled_cpp PRIVATE extreme_rtl)
 set(case_names hello scalars calls libraries copy calls_copy copy_bandwidth)
 set(case_results 42 13630 96 205 42 37 0)
+if(EC_SIMD)
+    list(APPEND case_names simd)
+    list(APPEND case_results 42)
+endif()
 set(images)
 file(GLOB_RECURSE target_headers CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/include/*
-     ${CMAKE_CURRENT_SOURCE_DIR}/tasks/*.h
+     ${CMAKE_CURRENT_SOURCE_DIR}/tasks/*.h ${CMAKE_CURRENT_SOURCE_DIR}/simd/*.h
 )
 foreach(name expected IN ZIP_LISTS case_names case_results)
     set(image ${CMAKE_CURRENT_BINARY_DIR}/images/${name}.ecx)
@@ -51,7 +55,7 @@ add_custom_target(compiler_images ALL DEPENDS ${images})
 add_test(
     NAME compiler.diagnostics
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/diagnostics.py
-            ${CMAKE_BINARY_DIR}/bin/extreme-cxx
+            ${CMAKE_BINARY_DIR}/bin/extreme-cxx ${EC_SIMD_ENABLED}
 )
 if(EXTREME_VERILATOR_TESTS)
     add_test(
@@ -59,13 +63,14 @@ if(EXTREME_VERILATOR_TESTS)
         COMMAND
             ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/verilator.py
             ${CMAKE_SOURCE_DIR} ${CMAKE_BINARY_DIR} ${CPPHDL_HOME} ${CMAKE_CXX_COMPILER} ${EC_BITS}
-            ${EC_DEPTH} ${EC_CORES} ${EC_BANKS}
+            ${EC_DEPTH} ${EC_CORES} ${EC_BANKS} ${EC_SIMD_ENABLED}
     )
     set_tests_properties(compiler.verilator PROPERTIES TIMEOUT 600)
 endif()
 
 # A dedicated three-core/four-port system supplies two reads and two writes/clock.
 add_executable(Memcpy2_cpp ${CMAKE_SOURCE_DIR}/tests/memcpy2.cpp)
+target_link_libraries(Memcpy2_cpp PRIVATE extreme_features)
 target_include_directories(Memcpy2_cpp PRIVATE ${CPPHDL_HOME}/include)
 target_compile_options(Memcpy2_cpp PRIVATE -fno-strict-aliasing)
 target_compile_definitions(Memcpy2_cpp PRIVATE EC_BITS=${EC_BITS} EC_DEPTH=16 EC_CORES=3 EC_BANKS=4)
@@ -94,7 +99,7 @@ if(EXTREME_VERILATOR_TESTS)
             Memcpy2 --bits ${EC_BITS} --depth 16 --cores 3 --banks 4 --image
             ${CMAKE_CURRENT_BINARY_DIR}/images/memcpy2_1024.ecx --image2
             ${CMAKE_CURRENT_BINARY_DIR}/images/memcpy2_2048.ecx --build-dir ${CMAKE_BINARY_DIR}/rtl
-            --cxx ${CMAKE_CXX_COMPILER} --cpphdl ${CPPHDL_HOME}
+            --cxx ${CMAKE_CXX_COMPILER} --cpphdl ${CPPHDL_HOME} ${EC_SIMD_ARGS}
     )
     set_tests_properties(compiler.memcpy2.verilator PROPERTIES TIMEOUT 600)
 endif()
@@ -112,6 +117,7 @@ add_custom_command(
 )
 add_custom_target(task_intrinsics_image ALL DEPENDS ${task_intrinsics_image})
 add_executable(TaskIntrinsics_cpp ${CMAKE_SOURCE_DIR}/tests/compiled.cpp)
+target_link_libraries(TaskIntrinsics_cpp PRIVATE extreme_features)
 target_include_directories(TaskIntrinsics_cpp PRIVATE ${CPPHDL_HOME}/include)
 target_compile_options(TaskIntrinsics_cpp PRIVATE -fno-strict-aliasing)
 target_compile_definitions(
@@ -128,6 +134,7 @@ if(EXTREME_VERILATOR_TESTS)
             Compiled --bits ${EC_BITS} --depth 16 --cores 3 --banks 4 --image
             ${task_intrinsics_image} --expected 42 --mode stalls --build-dir
             ${CMAKE_BINARY_DIR}/rtl --cxx ${CMAKE_CXX_COMPILER} --cpphdl ${CPPHDL_HOME}
+            ${EC_SIMD_ARGS}
     )
     set_tests_properties(compiler.task_intrinsics.verilator PROPERTIES TIMEOUT 600)
 endif()

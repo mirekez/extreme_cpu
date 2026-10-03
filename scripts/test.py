@@ -11,6 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
 p.add_argument("--flow", choices=["cpp", "verilator", "all"], default="all")
+p.add_argument("--simd", action="store_true", help="enable EC_SIMD in C++ and generated RTL")
 p.add_argument("--bits", type=int, default=128)
 p.add_argument("--depth", type=int, default=16)
 p.add_argument("--cores", type=int, default=2)
@@ -28,6 +29,7 @@ p.add_argument(
         "Tasks",
         "Memcpy2",
         "Compiled",
+        "SIMD",
     ],
     default="all",
 )
@@ -42,6 +44,8 @@ p.add_argument("--cpphdl", type=Path)
 a = p.parse_args()
 cpphdl = a.cpphdl or Path(os.environ.get("CPPHDL_HOME", str(Path.home() / "cpphdl")))
 build = (a.build_dir or ROOT / "build") / f"b{a.bits}-d{a.depth}-c{a.cores}-m{a.banks}"
+if a.simd:
+    build = build.with_name(build.name + "-simd")
 build.mkdir(parents=True, exist_ok=True)
 
 
@@ -69,11 +73,22 @@ flags = [
     f"-DEC_CORES={a.cores}",
     f"-DEC_BANKS={a.banks}",
 ]
+feature_flags = ["-DEC_SIMD"] if a.simd else []
+flags += feature_flags
 if a.flow in ["cpp", "all"]:
-    run([cxx, "-std=c++20", ROOT / "arch/tests/instructions.cpp", "-o", build / "instructions"])
+    run(
+        [
+            cxx,
+            *feature_flags,
+            "-std=c++20",
+            ROOT / "arch/tests/instructions.cpp",
+            "-o",
+            build / "instructions",
+        ]
+    )
     run([build / "instructions"])
 for name in (
-    ["LoadFifo", "StoreFifo", "Memory", "MemoryMux", "TasksControl", "System", "Tasks"]
+    ["LoadFifo", "StoreFifo", "Memory", "MemoryMux", "TasksControl", "System", "Tasks", "SIMD"]
     if a.test == "all"
     else [a.test]
 ):
@@ -82,9 +97,10 @@ for name in (
         "Tasks": "tests/tasks.cpp",
         "Compiled": "tests/compiled.cpp",
         "System": "tests/memcpy.cpp",
+        "SIMD": "tests/simd.cpp",
     }
     src = ROOT / sources.get(name, f"rtl/tests/{name}.cpp")
-    top = "System" if name in ["Compiled", "Tasks", "Memcpy2"] else name
+    top = "System" if name in ["Compiled", "Tasks", "Memcpy2", "SIMD"] else name
     runtime_args = [str(a.image), a.expected, a.limit, a.mode] if name == "Compiled" else []
     if name == "Memcpy2":
         if a.image is None or a.image2 is None:

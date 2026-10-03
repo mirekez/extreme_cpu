@@ -9,6 +9,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser()
+p.add_argument("--simd", action="store_true", help="include SIMD hardware")
 p.add_argument("--bits", type=int, default=64)
 p.add_argument("--depth", type=int, default=2)
 p.add_argument("--cores", type=int, default=1)
@@ -24,6 +25,8 @@ yosys = (
 if not yosys:
     p.error("Yosys with slang is required")
 work = ROOT / "build" / f"synthesis-b{a.bits}-d{a.depth}-c{a.cores}-m{a.banks}-w{a.words}"
+if a.simd:
+    work = work.with_name(work.name + "-simd")
 work.mkdir(parents=True, exist_ok=True)
 gen = work / "generated"
 flags = [
@@ -34,6 +37,8 @@ flags = [
     f"-DEC_BANKS={a.banks}",
     f"-DEC_BANK_WORDS={a.words}",
 ]
+if a.simd:
+    flags.append("-DEC_SIMD")
 subprocess.run(
     [
         str(cpphdl / "build/cpphdl"),

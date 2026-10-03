@@ -146,6 +146,66 @@ struct Backend {
         return f->getName().starts_with("__extreme_task_");
     }
 
+#ifdef EC_SIMD
+    bool simdBuiltin(Function* f) {
+        return f->getName().starts_with("__extreme_simd_");
+    }
+
+    void emitSimd(CallBase& call) {
+        auto name = call.getCalledFunction()->getName();
+        bool splat = name == "__extreme_simd_splat32";
+        if (!call.getType()->isVoidTy() || call.arg_size() != (splat ? 2 : 3) ||
+            !call.getArgOperand(0)->getType()->isPointerTy() ||
+            (splat ? !call.getArgOperand(1)->getType()->isIntegerTy(32)
+                   : (!call.getArgOperand(1)->getType()->isPointerTy() ||
+                      !call.getArgOperand(2)->getType()->isPointerTy()))) {
+            fail("invalid SIMD intrinsic signature");
+        }
+        Opcode opcode;
+        if (name == "__extreme_simd_add32") {
+            opcode = Opcode::SimdAdd32;
+        } else if (name == "__extreme_simd_sub32") {
+            opcode = Opcode::SimdSub32;
+        } else if (name == "__extreme_simd_and32") {
+            opcode = Opcode::SimdAnd32;
+        } else if (name == "__extreme_simd_or32") {
+            opcode = Opcode::SimdOr32;
+        } else if (name == "__extreme_simd_xor32") {
+            opcode = Opcode::SimdXor32;
+        } else if (name == "__extreme_simd_shl32") {
+            opcode = Opcode::SimdShiftLeft32;
+        } else if (name == "__extreme_simd_shr32") {
+            opcode = Opcode::SimdShiftRight32;
+        } else if (name == "__extreme_simd_ltu32") {
+            opcode = Opcode::SimdLessUnsigned32;
+        } else if (name == "__extreme_simd_sar32") {
+            opcode = Opcode::SimdShiftArithmetic32;
+        } else if (name == "__extreme_simd_mul32") {
+            opcode = Opcode::SimdMultiply32;
+        } else if (name == "__extreme_simd_lts32") {
+            opcode = Opcode::SimdLessSigned32;
+        } else if (name == "__extreme_simd_splat32") {
+            opcode = Opcode::SimdSplat32;
+        } else {
+            fail("unknown SIMD intrinsic: " + name.str());
+        }
+        // r0/r1 hold returns and r7 holds the task frame base. Keep them intact.
+        read(call.getArgOperand(0), 6);
+        read(call.getArgOperand(1), 2);
+        if (!splat) {
+            read(call.getArgOperand(2), 3);
+        }
+        fence();
+        if (!splat) {
+            out.emit(Opcode::Load, 2, 2);
+            out.emit(Opcode::Load, 3, 3);
+        }
+        out.emit(opcode, 4, 2, 3);
+        out.emit(Opcode::Store, 4, 6);
+        fence();
+    }
+#endif
+
     Function* taskEntry(CallBase& call) {
         if (call.arg_size() != 3) {
             fail("task issue requires id, entry, and predecessor mask");
@@ -356,6 +416,11 @@ struct Backend {
     }
 
     bool builtin(Function* f) {
+#ifdef EC_SIMD
+        if (simdBuiltin(f)) {
+            return true;
+        }
+#endif
         return taskBuiltin(f) || f->isIntrinsic() || f->getName() == "memcpy" ||
                f->getName() == "memset";
     }
@@ -605,6 +670,12 @@ struct Backend {
     void emitCall(CallBase& call) {
         auto* f = call.getCalledFunction();
         auto name = f->getName();
+#ifdef EC_SIMD
+        if (simdBuiltin(f)) {
+            emitSimd(call);
+            return;
+        }
+#endif
         if (taskBuiltin(f)) {
             emitTask(call);
             return;

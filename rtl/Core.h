@@ -144,6 +144,10 @@ public:
         unsigned i, slot, pos, code, n, d, a, b, size, lane, index;
         uint32_t x, y;
         logic<EC_BITS> ins, wide_mask, wide_value;
+#ifdef EC_SIMD
+        uint32_t simd_result;
+        logic<EC_BITS> simd_value;
+#endif
         bool sr, er, lr;
         loads._work(reset || task_launch_in());
         stores._work(reset || task_launch_in());
@@ -256,6 +260,14 @@ public:
                     if (code == 64 || code == 66 || code == 69) {
                         n = 5;
                     }
+#ifdef EC_SIMD
+                    if (code >= 128 && code <= 138) {
+                        n = 4;
+                    }
+                    if (code == 139) {
+                        n = 3;
+                    }
+#endif
                     if (n == 0 || pos + n > EC_BITS / 8) {
                         bad._next = 1;
                         done._next = 1;
@@ -296,6 +308,48 @@ public:
                             (op >= 32 && op <= 46 && right >= EC_REGS))) {
                     bad._next = 1;
                     done._next = 1;
+#ifdef EC_SIMD
+                } else if (op >= 128 && op <= 139) {
+                    if (dst >= EC_REGS || left >= EC_REGS || (op != 139 && right >= EC_REGS)) {
+                        bad._next = 1;
+                        done._next = 1;
+                    } else {
+                        simd_value = 0;
+                        // Read only current registers: destination/source aliasing is legal.
+                        for (lane = 0; lane < EC_BITS / 32; ++lane) {
+                            x = uint32_t(regs[a] >> (lane * 32));
+                            y = uint32_t(regs[b] >> (lane * 32));
+                            simd_result = 0;
+                            if (op == 128) {
+                                simd_result = x + y;
+                            } else if (op == 129) {
+                                simd_result = x - y;
+                            } else if (op == 130) {
+                                simd_result = x & y;
+                            } else if (op == 131) {
+                                simd_result = x | y;
+                            } else if (op == 132) {
+                                simd_result = x ^ y;
+                            } else if (op == 133) {
+                                simd_result = x << (y & 31);
+                            } else if (op == 134) {
+                                simd_result = x >> (y & 31);
+                            } else if (op == 135) {
+                                simd_result = x < y ? 1 : 0;
+                            } else if (op == 136) {
+                                simd_result = uint32_t(int32_t(x) >> (y & 31));
+                            } else if (op == 137) {
+                                simd_result = x * y;
+                            } else if (op == 138) {
+                                simd_result = int32_t(x) < int32_t(y) ? 1 : 0;
+                            } else if (op == 139) {
+                                simd_result = uint32_t(regs[a]);
+                            }
+                            simd_value = simd_value | (logic<EC_BITS>(simd_result) << (lane * 32));
+                        }
+                        regs[d]._next = simd_value;
+                    }
+#endif
                 } else if (op >= 80 && op <= 86) {
                     if (dst >= EC_REGS ||
                         ((op == 80 || op == 81 || op == 82 || op == 85) && left >= EC_REGS) ||

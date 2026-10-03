@@ -41,7 +41,9 @@ or existing binaries is not required.
 10. A store becomes visible to reads only when the controller commits it to
     memory. Software/compiler scheduling must respect this rule. Provide an
     explicit barrier that waits for completion, not merely queue acceptance.
-11. Add SIMD operations over the entire register width in a later revision.
+11. Support optional SIMD operations over the entire register width on every core.
+    Guard the extension with `EC_SIMD` and enable it through the CMake option
+    of the same name. The initial extension uses independent 32-bit integer lanes.
     Preserve full-width storage and stage interfaces in the first prototype.
 
 12. Provide RISC-V-style scalar memory size/sign flags operating on the low

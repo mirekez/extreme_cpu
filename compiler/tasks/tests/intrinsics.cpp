@@ -1,4 +1,14 @@
 #include <tasks/tasks.h>
+#ifdef EC_SIMD
+#include <simd/simd.h>
+alignas(EC_BUS_BYTES) uint32_t simd_values[2][EC_BUS_BYTES / 4];
+
+__attribute__((noinline)) unsigned simd_helper(unsigned task) {
+    extreme::simd::splat32(simd_values[task], task + 1);
+    extreme::simd::mul32(simd_values[task], simd_values[task], simd_values[task]);
+    return simd_values[task][EC_BUS_BYTES / 4 - 1];
+}
+#endif
 using namespace extreme::tasks;
 alignas(64) unsigned char source[2][192] = {{7, 9, 11}, {13, 17, 19}};
 alignas(64) unsigned char destination[2][192];
@@ -14,6 +24,11 @@ __attribute__((noinline)) unsigned arithmetic(unsigned x) {
 
 __attribute__((noinline)) unsigned copy_helper(unsigned task) {
     __builtin_memcpy(destination[task], source[task], 192);
+#ifdef EC_SIMD
+    if (simd_helper(task) != (task + 1) * (task + 1)) {
+        abort(0xbad2);
+    }
+#endif
     return arithmetic(task + 10);
 }
 

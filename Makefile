@@ -1,5 +1,5 @@
 # Compatibility entry points; CMake/CTest owns the build.
-.PHONY: all test cpp verilator matrix synth format format-check
+.PHONY: all test cpp verilator matrix matrix-simd synth format format-check
 
 all:
 	cmake -S . -B build/cmake -DCMAKE_BUILD_TYPE=Release
@@ -28,3 +28,9 @@ format:
 
 format-check:
 	python3 scripts/format.py --check
+
+matrix-simd:
+	python3 scripts/test.py --simd --bits 64 --test SIMD
+	python3 scripts/test.py --simd --bits 128 --test SIMD
+	python3 scripts/test.py --simd --bits 256 --test SIMD
+	python3 scripts/test.py --simd --bits 512 --test SIMD
