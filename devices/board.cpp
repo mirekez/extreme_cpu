@@ -28,7 +28,7 @@ struct Board : Harness {
     }
 
     void run(const std::string& path, const std::string& socket, unsigned limit, bool stalls,
-             bool require_task, unsigned progress) {
+             bool require_task, unsigned progress, bool allow_idle_network) {
         std::ifstream file(path, std::ios::binary);
         require(bool(file), "cannot open image");
         auto field = [&]() {
@@ -182,7 +182,8 @@ struct Board : Harness {
                 "missing successful MMIO shutdown");
         require(console.find("MIKOS:EXIT 0\n") != std::string::npos, "missing kernel exit marker");
         require(!require_task || launches > 0, "no task executed");
-        require(socket.empty() || (rx_frames >= 2 && tx_frames >= 2), "missing Ethernet traffic");
+        require(allow_idle_network || socket.empty() || (rx_frames >= 2 && tx_frames >= 2),
+                "missing Ethernet traffic");
         std::cout << "Extreme board PASS cycles=" << cycle << " cores=" << EC_CORES
                   << " tasks=" << launches << " rx=" << rx_frames << " tx=" << tx_frames << '\n';
     }
@@ -192,13 +193,15 @@ int main(int argc, char** argv) {
     try {
         std::string image, socket;
         unsigned cycles = 10000000, progress = 0;
-        bool stalls = false, task = false;
+        bool stalls = false, task = false, allow_idle_network = false;
         for (int i = 1; i < argc; ++i) {
             std::string option = argv[i];
             if (option == "--stalls") {
                 stalls = true;
             } else if (option == "--require-task") {
                 task = true;
+            } else if (option == "--allow-idle-network") {
+                allow_idle_network = true;
             } else {
                 require(i + 1 < argc, "option needs a value");
                 std::string value = argv[++i];
@@ -215,10 +218,11 @@ int main(int argc, char** argv) {
                 }
             }
         }
-        require(!image.empty(), "usage: board --image FILE [--socket PATH] [--cycles N] "
-                                "[--progress N] [--stalls] [--require-task]");
+        require(!image.empty(),
+                "usage: board --image FILE [--socket PATH] [--cycles N] "
+                "[--progress N] [--stalls] [--require-task] [--allow-idle-network]");
         Board board;
-        board.run(image, socket, cycles, stalls, task, progress);
+        board.run(image, socket, cycles, stalls, task, progress, allow_idle_network);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
