@@ -41,8 +41,9 @@ dimensions, executes all CPU instructions, forwards UART/packets, and checks
 the mikOS kernel acceptance markers and final result. `scripts/board.py` builds
 the same harness against generated SystemVerilog. CMake builds `ExtremeBoard_cpp`
 when `EXTREME_BUILD_DEVICES=ON` (default); `EC_BOARD_BANK_WORDS` sets board capacity.
-Interactive launchers may pass `--allow-idle-network` so a session can exit
-without receiving host packets. Automated network tests retain the default
+The `--cycles` limit uses a 64-bit counter; `--cycles 0` runs until guest
+shutdown or user interruption. Interactive launchers may pass
+`--allow-idle-network` so a session can exit without receiving host packets. Automated network tests retain the default
 requirement for at least two received and two transmitted frames.
 
 ```sh

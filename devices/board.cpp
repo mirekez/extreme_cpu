@@ -27,8 +27,8 @@ struct Board : Harness {
         return result;
     }
 
-    void run(const std::string& path, const std::string& socket, unsigned limit, bool stalls,
-             bool require_task, unsigned progress, bool allow_idle_network) {
+    void run(const std::string& path, const std::string& socket, uint64_t limit, bool stalls,
+             bool require_task, uint64_t progress, bool allow_idle_network) {
         std::ifstream file(path, std::ios::binary);
         require(bool(file), "cannot open image");
         auto field = [&]() {
@@ -71,8 +71,8 @@ struct Board : Harness {
         std::deque<uint8_t> keyboard;
         host_mode_in = false;
         run_in = true;
-        unsigned cycle;
-        for (cycle = 0; cycle < limit; ++cycle) {
+        uint64_t cycle;
+        for (cycle = 0; limit == 0 || cycle < limit; ++cycle) {
             if (progress && cycle && cycle % progress == 0) {
                 std::cerr << "Extreme progress cycles=" << cycle
                           << " pc=" << uint32_t(OUT(debug_pc_out[0]))
@@ -166,7 +166,7 @@ struct Board : Harness {
                 break;
             }
         }
-        require(cycle < limit, "board cycle limit exhausted");
+        require(limit == 0 || cycle < limit, "board cycle limit exhausted");
         media.poll();
         require(media.drained(), "Ethernet output still queued at shutdown");
         run_in = false;
@@ -192,7 +192,7 @@ struct Board : Harness {
 int main(int argc, char** argv) {
     try {
         std::string image, socket;
-        unsigned cycles = 10000000, progress = 0;
+        uint64_t cycles = 10000000, progress = 0;
         bool stalls = false, task = false, allow_idle_network = false;
         for (int i = 1; i < argc; ++i) {
             std::string option = argv[i];
@@ -210,16 +210,16 @@ int main(int argc, char** argv) {
                 } else if (option == "--socket") {
                     socket = value;
                 } else if (option == "--cycles") {
-                    cycles = std::stoul(value);
+                    cycles = std::stoull(value);
                 } else if (option == "--progress") {
-                    progress = std::stoul(value);
+                    progress = std::stoull(value);
                 } else {
                     throw std::runtime_error("unknown board option " + option);
                 }
             }
         }
         require(!image.empty(),
-                "usage: board --image FILE [--socket PATH] [--cycles N] "
+                "usage: board --image FILE [--socket PATH] [--cycles N (0=unlimited)] "
                 "[--progress N] [--stalls] [--require-task] [--allow-idle-network]");
         Board board;
         board.run(image, socket, cycles, stalls, task, progress, allow_idle_network);
